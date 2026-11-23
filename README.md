@@ -1,185 +1,332 @@
-# Sistema de Simulação de Eleição Eletrônica — Back-End
+# 🗳️ Sistema de Simulação de Eleição Eletrônica - Back-End
 
-## 1. Visão geral
+API RESTful desenvolvida em **Node.js**, **TypeScript** e **Neo4j (Banco de Dados Orientado a Grafos)** para simular o ciclo completo de uma eleição eletrônica: administração do pleito, cadastro de participantes, votação com sigilo garantido, acompanhamento em tempo real e apuração final dos resultados.
 
-API para simular uma eleição eletrônica: gerenciamento da eleição, cadastro de eleitores e candidatos, votação sigilosa e acompanhamento dos resultados.
+---
 
-**Stack:** Node.js, NestJS, TypeScript e PostgreSQL.
-O Front-End (Ionic/React) é um projeto separado e se comunica com o Back-End apenas pelo contrato da API, documentado com Swagger/OpenAPI.
+## 🛠️ Tecnologias Utilizadas
 
-## 2. Perfis de usuário
+* **Runtime & Linguagem:** Node.js + TypeScript 5
+* **Framework Web:** Express 5
+* **Banco de Dados:** Neo4j AuraDB Free + `neo4j-driver`
+* **Autenticação & Segurança:** JSON Web Token (`jsonwebtoken`) e hash de senhas com `bcryptjs`
+* **Documentação Interativa:** OpenAPI 3.0 com Swagger UI (`swagger-ui-express`)
+* **Testes Automatizados:** Jest (`ts-jest`) e Supertest
 
-| Perfil | O que pode fazer |
-|---|---|
-| **CHEFE** (Chefe da Seção) | Cadastrar, alterar, consultar e inativar eleitores e candidatos; cadastrar eleição; abrir e encerrar a votação; consultar a situação da eleição |
-| **ELEITOR** | Consultar candidatos por cargo; votar; acompanhar a votação de todos os cargos; consultar o resultado final |
-| **CANDIDATO** | Votar; acompanhar a votação apenas do cargo em que concorre; consultar o resultado final desse cargo |
+---
 
-Todos os perfis podem votar. As funcionalidades disponíveis respeitam o perfil do usuário autenticado.
+## 1. Arquitetura do Sistema
 
-## 3. Ciclo de vida da eleição
-
-```mermaid
-stateDiagram-v2
-    [*] --> AGENDADA : cadastro da eleição
-    AGENDADA --> ABERTA : Chefe abre (na data, a partir do horário de abertura)
-    ABERTA --> ENCERRADA : Chefe encerra (a partir do horário de encerramento)
-    ENCERRADA --> [*]
-```
-
-Somente o Chefe da Seção realiza a abertura e o encerramento. A situação `ABERTA` é a única condição para que votos sejam aceitos.
-
-## 4. Modelo de dados
-
-### 4.1 Diagrama entidade-relacionamento
+A aplicação adota uma **Arquitetura em Camadas Orientada a Domínio (Modular Layered Architecture)**, separando responsabilidades técnicas e de negócio para facilitar manutenção, testabilidade e evolução do código:
 
 ```mermaid
-erDiagram
-    USUARIO ||--o{ CANDIDATO : "é inscrito como"
-    USUARIO ||--o{ COMPARECIMENTO : "registra"
-    ELEICAO ||--o{ CANDIDATO : "possui"
-    ELEICAO ||--o{ COMPARECIMENTO : "contabiliza"
-    ELEICAO ||--o{ VOTO : "recebe"
-    CANDIDATO ||--o{ VOTO : "recebe"
-    ELEICAO |o--o| ELEICAO : "turno anterior"
+flowchart TD
+    subgraph Clientes["Clientes e Ferramentas de Teste"]
+        FE["Front-End (Ionic + React)"]
+        SW["Swagger UI (/api-docs)"]
+        IN["Insomnia / Postman"]
+    end
 
-    USUARIO {
-        uuid id PK
-        string login UK
-        string senha_hash
-        string nome
-        enum perfil "CHEFE, ELEITOR ou CANDIDATO"
-        boolean ativo
-    }
+    subgraph API["Back-End (Node.js + Express + TypeScript)"]
+        MW["Middleware de Segurança (authMiddleware.ts)<br/>Validação JWT e Perfis: ChefeSecao | Eleitor | Candidato"]
 
-    ELEICAO {
-        uuid id PK
-        date data
-        smallint turno "1 ou 2"
-        time horario_abertura
-        time horario_encerramento
-        enum situacao "AGENDADA, ABERTA ou ENCERRADA"
-        uuid eleicao_anterior_id FK "nulo no 1º turno"
-    }
+        subgraph Modulos["Módulos de Domínio"]
+            M1["auth"]
+            M2["eleicoes"]
+            M3["eleitores"]
+            M4["candidatos"]
+            M5["votacao"]
+            M6["resultados"]
+        end
 
-    CANDIDATO {
-        uuid id PK
-        uuid usuario_id FK
-        uuid eleicao_id FK
-        enum cargo
-        int numero
-        string partido
-        boolean ativo
-    }
+        subgraph Camadas["Fluxo Interno por Módulo"]
+            direction TB
+            R["Routes (*.routes.ts)<br/>Definição de endpoints e permissões"]
+            C["Controller (*.controller.ts)<br/>Tratamento HTTP (Request / Response)"]
+            S["Service (*.service.ts)<br/>Regras de negócio do minimundo"]
+            RP["Repository (*.repository.ts)<br/>Queries Cypher e transações atômicas"]
+            R --> C --> S --> RP
+        end
+    end
 
-    COMPARECIMENTO {
-        uuid usuario_id PK, FK
-        uuid eleicao_id PK, FK
-        enum cargo PK
-    }
+    subgraph DB["Persistência em Grafo"]
+        NEO[("Neo4j AuraDB Free")]
+    end
 
-    VOTO {
-        uuid id PK
-        uuid candidato_id FK
-        uuid eleicao_id FK
-    }
+    FE & SW & IN -->|"HTTP / JSON + Bearer Token"| MW
+    MW --> Modulos
+    Modulos --> Camadas
+    RP -->|"Bolt / TLS"| NEO
 ```
 
-### 4.2 Dicionário de dados
+### Decisões Arquiteturais Relevantes
+1. **Separação entre `app.ts` e `server.ts`:** A configuração do Express (rotas, middlewares e Swagger) fica isolada em `src/app.ts`, enquanto a conexão com o banco, execução do *seed* e abertura da porta HTTP ficam em `src/server.ts`. Isso permite que os testes de integração importem a aplicação sem precisar abrir portas de rede.
+2. **Controle de Acesso Baseado em Perfis (RBAC):** Implementado via middleware (`authMiddleware.ts`), que decodifica o JWT e valida se o perfil autenticado (`ChefeSecao`, `Eleitor` ou `Candidato`) possui autorização para acessar o recurso solicitado.
+3. **Seed Automático Idempotente (`src/config/seed.ts`):** Ao iniciar, o servidor garante a existência dos 5 cargos oficiais e do usuário administrador inicial (`ChefeSecao`) utilizando operações `MERGE` no Neo4j.
 
-**USUARIO** — credenciais e identificação de todos os perfis. O eleitor é o próprio usuário.
+---
 
-| Campo | Tipo | Observação |
-|---|---|---|
-| id | UUID | PK |
-| login | texto | único |
-| senha_hash | texto | senha armazenada somente como hash |
-| nome | texto | |
-| perfil | enum | CHEFE, ELEITOR, CANDIDATO |
-| ativo | booleano | inativo não autentica nem recebe voto |
+## 2. Descrição da Modularização
 
-**ELEICAO** — uma eleição em um turno. O 2º turno é uma nova eleição ligada à anterior.
+O código-fonte dentro de `backend/` está dividido em módulos funcionais independentes, onde cada módulo encapsula suas próprias rotas, controlador, serviço e repositório:
 
-| Campo | Tipo | Observação |
-|---|---|---|
-| id | UUID | PK |
-| data | data | dia da votação |
-| turno | inteiro | 1 ou 2 |
-| horario_abertura | hora | protege a transição para ABERTA |
-| horario_encerramento | hora | protege a transição para ENCERRADA |
-| situacao | enum | AGENDADA, ABERTA, ENCERRADA |
-| eleicao_anterior_id | UUID | FK para ELEICAO; nulo no 1º turno |
+```text
+backend/
+├── database/
+│   └── init.cypher                 # Script de constraints e carga inicial do Neo4j
+├── src/
+│   ├── config/
+│   │   ├── neo4j.ts                # Conexão e gerenciamento de sessões com AuraDB
+│   │   ├── seed.ts                 # Inicialização automática de cargos e Chefe da Seção
+│   │   └── swagger.ts              # Especificação OpenAPI 3.0 e configuração do Swagger UI
+│   ├── shared/
+│   │   └── middlewares/
+│   │       └── authMiddleware.ts   # Autenticação JWT e autorização por perfil
+│   ├── modules/
+│   │   ├── auth/                   # Módulo 1: Login e emissão de token JWT
+│   │   ├── eleicoes/               # Módulo 2: Cadastro, abertura, encerramento e status
+│   │   ├── eleitores/              # Módulo 3: CRUD completo de eleitores
+│   │   ├── candidatos/             # Módulo 4: CRUD de candidatos e vínculo com cargo/eleição
+│   │   ├── votacao/                # Módulo 5: Registro sigiloso de voto e trava anti-duplicidade
+│   │   └── resultados/             # Módulos 6 e 7: Acompanhamento parcial e apuração final
+│   ├── app.ts                      # Instância configurada do Express
+│   └── server.ts                   # Ponto de entrada (bootstrap do servidor)
+└── tests/
+    ├── unit/
+    │   └── regras-negocio.test.ts  # Testes unitários isolados das camadas Service
+    └── integration/
+        └── api.test.ts             # Testes de integração HTTP (rotas, JWT e perfis)
+```
 
-Restrição: índice único parcial garante no máximo uma eleição com `situacao = 'ABERTA'`.
+### Responsabilidade de Cada Módulo
+* **`auth`:** Autentica `ChefeSecao`, `Eleitor` e `Candidato` por e-mail e senha (`bcryptjs`), gerando um token JWT contendo o perfil do usuário.
+* **`eleicoes`:** Permite ao Chefe da Seção cadastrar eleições (data, turno, horários) e gerenciar suas transições de estado (`AGENDADA` → `ABERTA` → `ENCERRADA`), além de permitir consulta da situação atual.
+* **`eleitores`:** CRUD completo restrito ao Chefe da Seção para gerenciar os eleitores aptos a votar.
+* **`candidatos`:** CRUD restrito ao Chefe da Seção para cadastrar candidatos com número eleitoral e partido, criando no grafo os vínculos com `:Cargo` e `:Eleicao`. Também expõe listagem filtrável para os eleitores.
+* **`votacao`:** Exclusivo para o perfil `Eleitor`. Valida se a eleição está `ABERTA`, registra o voto de forma sigilosa e impede votos duplicados para o mesmo cargo ou alterações posteriores.
+* **`resultados`:** Gerencia o acompanhamento em tempo real (aplicando filtro automático para exibir ao `Candidato` apenas o cargo ao qual concorre) e a apuração do resultado final com o candidato mais votado após o encerramento.
 
-**CANDIDATO** — inscrição de um usuário em uma eleição (é a opção de voto).
+---
 
-| Campo | Tipo | Observação |
-|---|---|---|
-| id | UUID | PK |
-| usuario_id | UUID | FK para USUARIO |
-| eleicao_id | UUID | FK para ELEICAO |
-| cargo | enum | DEPUTADO_ESTADUAL, DEPUTADO_FEDERAL, SENADOR, GOVERNADOR, PRESIDENTE |
-| numero | inteiro | número de identificação eleitoral |
-| partido | texto | |
-| ativo | booleano | |
+## 3. Modelagem do Banco de Dados (Neo4j — Grafo)
 
-Restrições: `UNIQUE (eleicao_id, cargo, numero)` e `UNIQUE (id, eleicao_id)` (usada pela chave estrangeira composta de VOTO).
+Optou-se pelo **Neo4j** por sua capacidade nativa de expressar relacionamentos entre candidatos, cargos e eleições, além de permitir isolar fisicamente o nó de voto anônimo do nó do eleitor.
 
-**COMPARECIMENTO** — registra apenas que o usuário já votou em um cargo. Não guarda em quem votou.
+### Diagrama do Grafo
 
-| Campo | Tipo | Observação |
-|---|---|---|
-| usuario_id | UUID | parte da PK; FK para USUARIO |
-| eleicao_id | UUID | parte da PK; FK para ELEICAO |
-| cargo | enum | parte da PK |
+```mermaid
+graph LR
+    U[":Usuario:ChefeSecao"]
+    E[":Usuario:Eleitor"]
 
-A chave primária composta impede o voto duplicado do mesmo usuário para o mesmo cargo na mesma eleição.
+    C[":Usuario:Candidato"] -->|":CONCORRE_A"| CG[":Cargo"]
+    C -->|":PARTICIPA_DE"| EL[":Eleicao"]
 
-**VOTO** — voto anônimo.
+    V[":Voto (Anônimo)"] -->|":PARA_CANDIDATO"| C
+    V -->|":NA_ELEICAO"| EL
 
-| Campo | Tipo | Observação |
-|---|---|---|
-| id | UUID | PK aleatória (v4), nunca sequencial |
-| candidato_id | UUID | FK composta `(candidato_id, eleicao_id)` para CANDIDATO |
-| eleicao_id | UUID | |
+    RP[":RegistroParticipacao<br/>(Isolado - Sem Arestas)"]
 
-Não possui data, hora, usuário nem cargo (o cargo é obtido pelo candidato).
+    style RP fill:#f9f,stroke:#333,stroke-dasharray: 5 5
+    style V fill:#bbf,stroke:#333
+```
 
-## 5. Regras de negócio
+### Descrição dos Nós (Labels e Propriedades)
 
-1. **Autenticação:** todos os perfis entram com login e senha; as funcionalidades respeitam o perfil.
-2. **Administração:** somente o Chefe cadastra, altera, consulta e inativa eleitores e candidatos, e cadastra, abre e encerra eleições.
-3. **Votação:** só é aceita com a eleição `ABERTA`.
-4. **Eleição única aberta:** não pode haver mais de uma eleição `ABERTA` ao mesmo tempo.
-5. **Abertura e encerramento:** o Chefe só abre na data da eleição e a partir do horário de abertura, e só encerra a partir do horário de encerramento.
-6. **Candidatos:** só podem ser cadastrados ou alterados enquanto a eleição estiver `AGENDADA`.
-7. **Voto único por cargo:** cada usuário vota uma vez por cargo em cada eleição.
-8. **Voto irrevogável:** depois de registrado, o voto não pode ser alterado nem excluído.
-9. **Coerência do voto:** o candidato escolhido deve pertencer à eleição e ao cargo informados.
-10. **Sigilo do voto:** o sistema controla quem votou em cada cargo, mas não permite descobrir em quem.
-11. **Exclusão lógica:** eleitores e candidatos não são excluídos; são marcados como inativos. Os votos já recebidos permanecem na apuração.
-12. **Acompanhamento:** o Eleitor acompanha todos os cargos; o Candidato acompanha apenas o cargo em que concorre. A contagem é calculada a partir dos votos e atualizada a cada novo voto.
-13. **Resultado final:** disponível após o encerramento, com a quantidade de votos de cada candidato e o candidato mais votado por cargo.
-14. **2º turno:** é uma nova eleição (`turno = 2`) com `eleicao_anterior_id` apontando para o 1º turno. O Chefe seleciona, entre os candidatos do turno anterior (que deve estar `ENCERRADO`), quais participam, de qualquer cargo. Os dados do candidato (usuário, cargo, número e partido) são mantidos.
+| Rótulo (Label) | Propriedades Principais | Descrição |
+| :--- | :--- | :--- |
+| **`:Usuario:ChefeSecao`** | `id` (UUID), `nome`, `email`, `senhaHash` | Administrador responsável por gerenciar eleições, eleitores e candidatos. |
+| **`:Usuario:Eleitor`** | `id` (UUID), `nome`, `email`, `senhaHash`, `tituloEleitor` | Usuário habilitado a votar uma vez por cargo quando a eleição está `ABERTA`. |
+| **`:Usuario:Candidato`** | `id` (UUID), `nome`, `email`, `senhaHash`, `numeroEleitoral`, `partido` | Usuário que concorre a um cargo específico em uma eleição. |
+| **`:Eleicao`** | `id` (UUID), `data`, `turno`, `horarioAbertura`, `horarioEncerramento`, `status` | Representa o pleito (`AGENDADA`, `ABERTA` ou `ENCERRADA`). |
+| **`:Cargo`** | `nome` | Os 5 cargos fixos: *Deputado Estadual*, *Deputado Federal*, *Senador*, *Governador* e *Presidente da República*. |
+| **`:Voto`** | `id` (UUID), `confirmadoEm` | Voto anônimo contabilizado na apuração. Não possui referência ao eleitor. |
+| **`:RegistroParticipacao`** | `chaveUnica`, `registradoEm` | Nó isolado com chave composta (`${eleitorId}_${eleicaoId}_${cargo}`) para controle de voto único. |
 
-## 6. Decisões de projeto
+### Descrição dos Relacionamentos
 
-**Sigilo do voto.** O controle de quem votou (`COMPARECIMENTO`) e o conteúdo do voto (`VOTO`) ficam em estruturas separadas, sem nenhuma ligação entre elas. Para impedir o cruzamento por outros meios, `VOTO` não tem data nem hora, e usa UUID aleatório em vez de ID sequencial (a ordem de inserção não permite casar os registros). O registro do comparecimento e do voto ocorre na mesma transação.
+* `(:Candidato)-[:CONCORRE_A]->(:Cargo)`: Define a qual dos cinco cargos oficiais o candidato concorre.
+* `(:Candidato)-[:PARTICIPA_DE]->(:Eleicao)`: Vincula o candidato a uma eleição específica.
+* `(:Voto)-[:PARA_CANDIDATO]->(:Candidato)`: Contabiliza o voto para o candidato escolhido.
+* `(:Voto)-[:NA_ELEICAO]->(:Eleicao)`: Associa o voto à eleição correspondente.
 
-**Sem redundância.** O cargo pertence ao candidato e não é repetido no voto. A quantidade de votos de cada candidato não é armazenada: é calculada por contagem, evitando duas fontes de verdade. A consistência entre voto, candidato e eleição é garantida por chave estrangeira composta.
+### Garantia de Sigilo e Restrições de Integridade (`database/init.cypher`)
+Para atender simultaneamente à **unicidade do voto por cargo** e ao **sigilo absoluto**, o sistema não cria nenhuma aresta entre `:Eleitor` e `:Voto`. Durante a confirmação do voto, uma transação atômica cria:
+1. Um nó `:RegistroParticipacao` com `chaveUnica = "${eleitorId}_${eleicaoId}_${cargo}"`, protegido por uma *Unique Constraint* no Neo4j. Se o eleitor tentar votar novamente no mesmo cargo, o banco rejeita a transação.
+2. Um nó anônimo `:Voto` ligado apenas ao candidato e à eleição, impossibilitando rastrear em quem o eleitor votou.
 
-**Confirmação do voto.** A dupla confirmação acontece na interface. A API recebe um único voto, já confirmado, e o registra de forma irrevogável. O Back-End valida todas as regras por conta própria, sem confiar no cliente.
+Restrições aplicadas no banco:
+* `usuario_id_unico` (`:Usuario.id`) e `usuario_email_unico` (`:Usuario.email`)
+* `eleicao_id_unico` (`:Eleicao.id`)
+* `cargo_nome_unico` (`:Cargo.nome`)
+* `voto_id_unico` (`:Voto.id`)
+* `participacao_unica` (`:RegistroParticipacao.chaveUnica`)
 
-**Histórico.** Como nenhum registro é excluído e os votos são preservados, o desempenho de cada candidato em cada eleição pode ser consultado a qualquer momento.
+---
 
-## 7. Simplificações assumidas
+## 4. Matriz de Regras de Negócio e Perfis
 
-- O sistema simula uma única eleição por vez, sem divisão territorial (estado, zona ou seção). Todos os usuários com perfil Chefe têm as mesmas permissões.
-- O 2º turno não é calculado automaticamente: o Chefe o cadastra e escolhe os candidatos.
+| Funcionalidade / Regra | Chefe da Seção | Eleitor | Candidato |
+| :--- | :---: | :---: | :---: |
+| Login com credenciais (JWT) | ✅ | ✅ | ✅ |
+| Cadastrar / Abrir / Encerrar Eleição | ✅ | ❌ | ❌ |
+| Consultar situação da Eleição | ✅ | ✅ | ✅ |
+| Cadastrar / Alterar / Consultar / Excluir Eleitores | ✅ | ❌ | ❌ |
+| Cadastrar / Alterar / Consultar / Excluir Candidatos | ✅ | ❌ | ❌ |
+| Listar candidatos disponíveis | ✅ | ✅ | ✅ |
+| Votar (apenas com eleição `ABERTA`, 1x por cargo, imutável) | ❌ | ✅ | ❌ |
+| Acompanhar votação em tempo real | Todos os cargos | Todos os cargos | Apenas seu próprio cargo |
+| Consultar resultado final (apenas com eleição `ENCERRADA`) | ✅ | ✅ | ✅ |
 
-## 8. Pontos em aberto
+---
 
-- Validação de idade mínima e nacionalidade do eleitor: não implementada nesta versão; será avaliada. Se entrar, será aplicada no domínio do Back-End.
-- Critério de desempate para "candidato mais votado".
-- Voto em branco e nulo: não previstos nesta versão.
+## 5. Como Executar o Projeto
+
+### Pré-requisitos
+* Node.js (v18 ou superior)
+* Uma instância gratuita do **Neo4j AuraDB Free** (ou Neo4j local)
+
+### Passo a Passo
+1. **Clone o repositório e acesse a pasta do Back-End:**
+   ```bash
+   git clone <URL_DO_SEU_REPOSITORIO>
+   cd Simulacao-de-Eleicao-Eletronica/backend
+   ```
+
+2. **Instale as dependências:**
+   ```bash
+   npm install
+   ```
+
+3. **Configure as variáveis de ambiente:**
+   Crie um arquivo `.env` na raiz de `backend/` baseado no exemplo abaixo:
+   ```env
+   PORT=3000
+   JWT_SECRET="chave_secreta_eleicao_2026"
+   NEO4J_URI="neo4j+s://SEU_ID.databases.neo4j.io"
+   NEO4J_USERNAME="neo4j"
+   NEO4J_PASSWORD="SUA_SENHA_DO_AURADB"
+   CHEFE_EMAIL="chefe@eleicao.gov.br"
+   CHEFE_SENHA="admin123"
+   ```
+
+4. **Configure as constraints no Neo4j:**
+   Execute o conteúdo do arquivo `backend/database/init.cypher` no console **Query** do seu Neo4j AuraDB.
+
+5. **Inicie o servidor em modo de desenvolvimento:**
+   ```bash
+   npm run dev
+   ```
+   O servidor iniciará em `http://localhost:3000` e criará automaticamente os cargos e o Chefe da Seção inicial.
+
+---
+
+## 6. Documentação da API (Swagger UI)
+
+Com o servidor em execução, acesse a documentação interativa no navegador:
+* **URL:** `http://localhost:3000/api-docs`
+
+### Como testar rotas protegidas no Swagger:
+1. Execute o endpoint `POST /auth/login` com as credenciais do Chefe da Seção (`chefe@eleicao.gov.br` / `admin123`) ou de um usuário cadastrado.
+2. Copie o valor do campo `token` retornado.
+3. Clique no botão **Authorize** no topo direito da página do Swagger, cole o token e clique em **Authorize**.
+
+### Resumo dos Endpoints
+
+| Método | Rota | Perfil Autorizado | Descrição |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/auth/login` | Público | Autentica usuário e retorna token JWT |
+| `POST` | `/eleicoes` | `ChefeSecao` | Cadastra nova eleição (status `AGENDADA`) |
+| `GET` | `/eleicoes` | Todos autenticados | Lista todas as eleições |
+| `GET` | `/eleicoes/:id` | Todos autenticados | Consulta a situação atual de uma eleição |
+| `PATCH` | `/eleicoes/:id/abrir` | `ChefeSecao` | Altera status de `AGENDADA` para `ABERTA` |
+| `PATCH` | `/eleicoes/:id/encerrar` | `ChefeSecao` | Altera status de `ABERTA` para `ENCERRADA` |
+| `POST/GET/PUT/DELETE` | `/eleitores` | `ChefeSecao` | Gerenciamento completo de eleitores |
+| `POST/PUT/DELETE` | `/candidatos` | `ChefeSecao` | Gerenciamento de candidatos e vínculos |
+| `GET` | `/candidatos` | Todos autenticados | Lista candidatos (filtros: `eleicaoId`, `cargo`) |
+| `POST` | `/votacao` | `Eleitor` | Registra e confirma voto sigiloso |
+| `GET` | `/votacao/meus-status/:eleicaoId` | `Eleitor` | Lista cargos em que o eleitor já votou |
+| `GET` | `/resultados/:eleicaoId/acompanhamento` | Todos autenticados | Contabilização parcial (filtrada para `Candidato`) |
+| `GET` | `/resultados/:eleicaoId/final` | Todos autenticados | Apuração final e vencedor por cargo (`ENCERRADA`) |
+
+---
+
+## 7. Testes Automatizados
+
+A suíte de testes foi desenvolvida com **Jest (`ts-jest`)** e **Supertest**, dividida em duas camadas distintas dentro de `backend/tests/` para separar a validação isolada das regras de negócio da validação dos fluxos HTTP e de segurança:
+
+```text
+backend/tests/
+├── unit/
+│   └── regras-negocio.test.ts   # 6 testes unitários (camada Service com mocks)
+└── integration/
+    └── api.test.ts              # 4 testes de integração (rotas HTTP, JWT e RBAC)
+```
+
+---
+
+### 7.1 Testes Unitários (`tests/unit/regras-negocio.test.ts`)
+
+Os testes unitários validam exclusivamente as regras de negócio contidas nas classes `*Service`, simulando (*mockando*) os repositórios (`*Repository`) para executar de forma rápida e determinística sem depender de rede ou conexão ativa com o Neo4j:
+
+#### `VotacaoService`
+1. **Bloqueio de voto fora do período de votação (`deve impedir voto quando a eleição não estiver ABERTA`):**
+   * **Cenário:** Simula uma eleição com status `AGENDADA` no banco.
+   * **Validação:** Garante que o método `confirmarVoto` lança uma exceção (`"Votação não permitida. A eleição está atualmente AGENDADA."`) e confirma que o método de gravação no banco (`registrarVotoSigiloso`) **não** é chamado.
+2. **Prevenção de voto duplicado por cargo (`deve impedir voto duplicado do mesmo eleitor para o mesmo cargo`):**
+   * **Cenário:** Simula a falha de unicidade do Neo4j (`Neo.ClientError.Schema.ConstraintValidationFailed`) disparada pela chave composta de `:RegistroParticipacao` (`eleitorId_eleicaoId_cargo`).
+   * **Validação:** Garante que o serviço intercepta o erro técnico do banco e retorna uma mensagem clara ao eleitor impedindo um segundo voto para o mesmo cargo naquela eleição.
+
+#### `ResultadosService`
+3. **Restrição de acompanhamento por cargo para Candidatos (`deve restringir o acompanhamento do Candidato apenas ao seu próprio cargo`):**
+   * **Cenário:** Um usuário autenticado com perfil `Candidato` (concorrendo a *Governador*) solicita o acompanhamento parcial da votação.
+   * **Validação:** Verifica se o serviço consulta o cargo do candidato e repassa obrigatoriamente o filtro `'Governador'` ao repositório (`contabilizarVotos('eleicao-1', 'Governador')`), ocultando os resultados dos demais cargos.
+4. **Bloqueio do resultado final antes do encerramento (`deve bloquear consulta do resultado final enquanto a eleição estiver ABERTA`):**
+   * **Cenário:** Solicitação de apuração final enquanto o status da eleição ainda é `ABERTA`.
+   * **Validação:** Garante que o serviço bloqueia a operação e informa que o resultado final só fica disponível após o encerramento da votação.
+5. **Apuração e identificação do vencedor após encerramento (`deve apontar o candidato mais votado por cargo quando a eleição estiver ENCERRADA`):**
+   * **Cenário:** Simula uma eleição com status `ENCERRADA` e dois candidatos disputando *Presidente da República* (42 votos contra 30 votos).
+   * **Validação:** Confirma que o serviço agrupa os candidatos por cargo e identifica corretamente o candidato com maior número de votos no campo `maisVotado`.
+
+#### `EleicoesService`
+6. **Validação do ciclo de vida da eleição (`deve impedir encerrar uma eleição que ainda está AGENDADA`):**
+   * **Cenário:** Tentativa de chamar `encerrarVotacao` em uma eleição que ainda não foi aberta (`status: 'AGENDADA'`).
+   * **Validação:** Garante que a transição inválida é bloqueada, exigindo que a eleição passe primeiro pelo estado `ABERTA`.
+
+---
+
+### 7.2 Testes de Integração (`tests/integration/api.test.ts`)
+
+Os testes de integração utilizam o **Supertest** para disparar requisições HTTP reais contra a instância do Express (`src/app.ts`), validando o encadeamento entre rotas, middlewares de autenticação JWT, controle de acesso por perfil (RBAC) e respostas HTTP:
+
+1. **Verificação de disponibilidade da API (`GET /health deve retornar status 200`):**
+   * **Cenário:** Requisição `GET` para a rota pública `/health`.
+   * **Validação:** Confirma que o servidor Express está ativo e respondendo corretamente em JSON (`status: "OK"`).
+2. **Bloqueio de acesso não autenticado (`POST /eleicoes sem token JWT deve retornar 401`):**
+   * **Cenário:** Requisição `POST /eleicoes` enviada sem o cabeçalho `Authorization: Bearer <token>`.
+   * **Validação:** Confirma que o middleware `autenticarJWT` intercepta a chamada e retorna HTTP `401 Unauthorized`.
+3. **Controle de perfil na criação de eleição (`POST /eleicoes com perfil Eleitor deve retornar 403`):**
+   * **Cenário:** Requisição `POST /eleicoes` autenticada com um token JWT válido pertencente ao perfil `Eleitor`.
+   * **Validação:** Confirma que o middleware `exigirPerfil('ChefeSecao')` bloqueia a ação e retorna HTTP `403 Forbidden`, garantindo que apenas o Chefe da Seção administre eleições.
+4. **Controle de perfil na votação (`POST /votacao com perfil ChefeSecao deve retornar 403`):**
+   * **Cenário:** Requisição `POST /votacao` autenticada com um token JWT pertencente ao perfil `ChefeSecao`.
+   * **Validação:** Confirma que o middleware `exigirPerfil('Eleitor')` impede que administradores ou candidatos registrem votos, retornando HTTP `403 Forbidden`.
+
+---
+
+### Como Executar os Testes
+
+Dentro da pasta `backend/`, execute:
+
+```bash
+npm test
+```
+
+**Saída esperada:**
+```text
+PASS  tests/unit/regras-negocio.test.ts
+PASS  tests/integration/api.test.ts
+
+Test Suites: 2 passed, 2 total
+Tests:       10 passed, 10 total
+```
