@@ -86,7 +86,7 @@ export class ResultadosService {
 
     return Array.from(mapa.entries()).map(([cargo, candidatos]) => ({
       cargo,
-      candidatos,
+      candidatos: candidatos.sort((a, b) => b.totalVotos - a.totalVotos || a.nome.localeCompare(b.nome)),
     }));
   }
 }

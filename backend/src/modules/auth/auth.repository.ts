@@ -15,6 +15,7 @@ export class AuthRepository {
     try {
       const result = await session.run(
         `MATCH (u:Usuario {email: $email})
+         WHERE coalesce(u.ativo, true)
          RETURN u.id AS id, u.nome AS nome, u.email AS email,
                 u.senhaHash AS senhaHash, labels(u) AS labels`,
         { email }
@@ -25,9 +26,9 @@ export class AuthRepository {
       const record = result.records[0];
       const labels: string[] = record.get('labels');
 
-      let perfil: PerfilUsuario = 'Eleitor';
-      if (labels.includes('ChefeSecao')) perfil = 'ChefeSecao';
-      else if (labels.includes('Candidato')) perfil = 'Candidato';
+      const perfis = (['ChefeSecao', 'Candidato', 'Eleitor'] as const).filter(p => labels.includes(p));
+      if (perfis.length !== 1) return null;
+      const perfil: PerfilUsuario = perfis[0];
 
       return {
         id: record.get('id'),

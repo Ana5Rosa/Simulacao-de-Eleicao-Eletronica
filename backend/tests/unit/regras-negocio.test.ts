@@ -4,52 +4,25 @@ import { EleicoesService } from '../../src/modules/eleicoes/eleicoes.service';
 
 describe('Testes Unitários - Regras de Negócio da Eleição', () => {
   describe('VotacaoService', () => {
-    it('deve impedir voto quando a eleição não estiver ABERTA', async () => {
-      const mockRepo = {
-        buscarDadosParaVoto: jest.fn().mockResolvedValue({
-          statusEleicao: 'AGENDADA',
-          cargoCandidato: 'Governador',
-          nomeCandidato: 'Candidato A',
-        }),
-        registrarVotoSigiloso: jest.fn(),
-        listarCargosJaVotados: jest.fn(),
-      };
-
-      const service = new VotacaoService(mockRepo as any);
-
-      await expect(
-        service.confirmarVoto({
-          eleitorId: 'eleitor-1',
-          eleicaoId: 'eleicao-1',
-          candidatoId: 'cand-1',
-        })
-      ).rejects.toThrow('Votação não permitida. A eleição está atualmente AGENDADA.');
-
-      expect(mockRepo.registrarVotoSigiloso).not.toHaveBeenCalled();
+    const dados = { eleitorId: 'eleitor-1', eleicaoId: 'eleicao-1', candidatoId: 'cand-1' };
+    it('deve validar os identificadores antes de gravar', async () => {
+      const repo = { registrarVotoSigiloso: jest.fn() };
+      await expect(new VotacaoService(repo as any).confirmarVoto({ ...dados, candidatoId: '' })).rejects.toThrow('candidatoId');
+      expect(repo.registrarVotoSigiloso).not.toHaveBeenCalled();
     });
-
-    it('deve impedir voto duplicado do mesmo eleitor para o mesmo cargo', async () => {
-      const mockRepo = {
-        buscarDadosParaVoto: jest.fn().mockResolvedValue({
-          statusEleicao: 'ABERTA',
-          cargoCandidato: 'Senador',
-          nomeCandidato: 'Candidato B',
-        }),
-        registrarVotoSigiloso: jest.fn().mockRejectedValue({
-          code: 'Neo.ClientError.Schema.ConstraintValidationFailed',
-        }),
-        listarCargosJaVotados: jest.fn(),
-      };
-
-      const service = new VotacaoService(mockRepo as any);
-
-      await expect(
-        service.confirmarVoto({
-          eleitorId: 'eleitor-1',
-          eleicaoId: 'eleicao-1',
-          candidatoId: 'cand-2',
-        })
-      ).rejects.toThrow('Você já registrou e confirmou seu voto para o cargo de Senador nesta eleição.');
+    it.each(['AGENDADA', 'ENCERRADA'])('deve propagar o bloqueio transacional da eleição %s', async status => {
+      const repo = { registrarVotoSigiloso: jest.fn().mockRejectedValue(new Error(`Votação não permitida. A eleição está atualmente ${status}.`)) };
+      await expect(new VotacaoService(repo as any).confirmarVoto(dados)).rejects.toThrow(status);
+    });
+    it('deve propagar o bloqueio de voto duplicado', async () => {
+      const repo = { registrarVotoSigiloso: jest.fn().mockRejectedValue(new Error('Você já registrou e confirmou seu voto para o cargo de Senador nesta eleição.')) };
+      await expect(new VotacaoService(repo as any).confirmarVoto(dados)).rejects.toThrow('já registrou');
+    });
+    it('deve confirmar sem revelar o identificador ou candidato do voto', async () => {
+      const repo = { registrarVotoSigiloso: jest.fn().mockResolvedValue({ cargo: 'Senador', votoId: 'interno' }) };
+      const res = await new VotacaoService(repo as any).confirmarVoto(dados);
+      expect(repo.registrarVotoSigiloso).toHaveBeenCalledWith(dados);
+      expect(res).toEqual({ mensagem: 'Voto confirmado com sucesso!', cargo: 'Senador' });
     });
   });
 
@@ -131,6 +104,13 @@ describe('Testes Unitários - Regras de Negócio da Eleição', () => {
   });
 
   describe('EleicoesService', () => {
+    it.each([
+      { data: '2026-02-30' }, { turno: '3º Turno' }, { horarioAbertura: '25:00' }, { horarioEncerramento: '07:00' },
+    ])('deve rejeitar dados inválidos de eleição: %o', async alteracoes => {
+      const repo = { criar: jest.fn() };
+      await expect(new EleicoesService(repo as any).cadastrarEleicao({ data: '2026-11-23', turno: '1º Turno', horarioAbertura: '08:00', horarioEncerramento: '17:00', ...alteracoes })).rejects.toThrow();
+      expect(repo.criar).not.toHaveBeenCalled();
+    });
     it('deve impedir encerrar uma eleição que ainda está AGENDADA', async () => {
       const mockRepo = {
         buscarPorId: jest.fn().mockResolvedValue({

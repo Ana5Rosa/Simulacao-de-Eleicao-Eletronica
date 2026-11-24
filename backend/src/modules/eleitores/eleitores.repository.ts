@@ -24,7 +24,7 @@ export class EleitoresRepository {
            nome: $nome,
            email: $email,
            senhaHash: $senhaHash,
-           tituloEleitor: $tituloEleitor
+           tituloEleitor: $tituloEleitor, ativo: true
          })
          RETURN e.id AS id, e.nome AS nome, e.email AS email, e.tituloEleitor AS tituloEleitor`,
         {
@@ -35,6 +35,7 @@ export class EleitoresRepository {
           tituloEleitor: dados.tituloEleitor || '',
         }
       );
+      if (!result.records.length) throw new Error('Eleitor não encontrado.');
       const r = result.records[0];
       return {
         id: r.get('id'),
@@ -52,6 +53,7 @@ export class EleitoresRepository {
     try {
       const result = await session.run(
         `MATCH (e:Usuario:Eleitor)
+         WHERE coalesce(e.ativo, true)
          RETURN e.id AS id, e.nome AS nome, e.email AS email, e.tituloEleitor AS tituloEleitor
          ORDER BY e.nome ASC`
       );
@@ -71,6 +73,7 @@ export class EleitoresRepository {
     try {
       const result = await session.run(
         `MATCH (e:Usuario:Eleitor {id: $id})
+         WHERE coalesce(e.ativo, true)
          RETURN e.id AS id, e.nome AS nome, e.email AS email, e.tituloEleitor AS tituloEleitor`,
         { id }
       );
@@ -95,6 +98,8 @@ export class EleitoresRepository {
     try {
       const result = await session.run(
         `MATCH (e:Usuario:Eleitor {id: $id})
+         SET e._lock = true REMOVE e._lock
+         WITH e WHERE coalesce(e.ativo, true)
          SET e.nome = COALESCE($nome, e.nome),
              e.email = COALESCE($email, e.email),
              e.senhaHash = COALESCE($senhaHash, e.senhaHash),
@@ -108,6 +113,7 @@ export class EleitoresRepository {
           tituloEleitor: dados.tituloEleitor ?? null,
         }
       );
+      if (!result.records.length) throw new Error('Eleitor não encontrado.');
       const r = result.records[0];
       return {
         id: r.get('id'),
@@ -123,7 +129,11 @@ export class EleitoresRepository {
   async excluir(id: string): Promise<void> {
     const session = getSession();
     try {
-      await session.run(`MATCH (e:Usuario:Eleitor {id: $id}) DETACH DELETE e`, { id });
+      const result = await session.run(`MATCH (e:Usuario:Eleitor {id: $id})
+        SET e._lock = true REMOVE e._lock
+        WITH e WHERE coalesce(e.ativo, true)
+        SET e.ativo = false REMOVE e.senhaHash RETURN e.id AS id`, { id });
+      if (!result.records.length) throw new Error('Eleitor não encontrado.');
     } finally {
       await session.close();
     }

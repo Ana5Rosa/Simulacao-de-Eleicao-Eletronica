@@ -1,67 +1,25 @@
 import bcrypt from 'bcryptjs';
 import { Candidato, CandidatosRepository } from './candidatos.repository';
+import { texto, emailValido, senhaValida, numeroEleitoralValido } from '../../shared/validacao';
 
 export class CandidatosService {
   constructor(private candidatosRepository = new CandidatosRepository()) {}
 
   async cadastrarCandidato(dados: {
-    nome: string;
-    email: string;
-    senha: string;
-    numeroEleitoral: string;
-    partido: string;
-    cargo: string;
-    eleicaoId: string;
+    nome: string; email: string; senha: string; numeroEleitoral: string;
+    partido: string; cargo: string; eleicaoId: string;
   }): Promise<Candidato> {
-    if (
-      !dados.nome ||
-      !dados.email ||
-      !dados.senha ||
-      !dados.numeroEleitoral ||
-      !dados.partido ||
-      !dados.cargo ||
-      !dados.eleicaoId
-    ) {
-      throw new Error(
-        'Nome, e-mail, senha, número eleitoral, partido, cargo e eleicaoId são obrigatórios.'
-      );
-    }
-
-    const cargoValido = await this.candidatosRepository.cargoExiste(dados.cargo);
-    if (!cargoValido) {
-      throw new Error(
-        'Cargo inválido. Escolha entre: Deputado Estadual, Deputado Federal, Senador, Governador ou Presidente da República.'
-      );
-    }
-
-    const eleicaoValida = await this.candidatosRepository.eleicaoExiste(dados.eleicaoId);
-    if (!eleicaoValida) {
-      throw new Error('Eleição não encontrada.');
-    }
-
-    const numeroDuplicado = await this.candidatosRepository.numeroJaExisteNaEleicao(
-      dados.eleicaoId,
-      String(dados.numeroEleitoral)
-    );
-    if (numeroDuplicado) {
-      throw new Error('Já existe um candidato com este número eleitoral nesta eleição.');
-    }
-
-    const senhaHash = await bcrypt.hash(dados.senha, 10);
+    const nome = texto(dados.nome, 'Nome');
+    const email = emailValido(dados.email);
+    const numeroEleitoral = numeroEleitoralValido(dados.numeroEleitoral);
+    const partido = texto(dados.partido, 'Partido');
+    const cargo = texto(dados.cargo, 'Cargo');
+    const eleicaoId = texto(dados.eleicaoId, 'eleicaoId');
+    const senhaHash = await bcrypt.hash(senhaValida(dados.senha), 10);
     try {
-      return await this.candidatosRepository.criar({
-        nome: dados.nome,
-        email: dados.email,
-        senhaHash,
-        numeroEleitoral: String(dados.numeroEleitoral),
-        partido: dados.partido,
-        cargo: dados.cargo,
-        eleicaoId: dados.eleicaoId,
-      });
+      return await this.candidatosRepository.criar({ nome, email, senhaHash, numeroEleitoral, partido, cargo, eleicaoId });
     } catch (error: any) {
-      if (error.code === 'Neo.ClientError.Schema.ConstraintValidationFailed') {
-        throw new Error('Já existe um utilizador registado com este e-mail.');
-      }
+      if (error.code === 'Neo.ClientError.Schema.ConstraintValidationFailed') throw new Error('Já existe um usuário cadastrado com este e-mail.');
       throw error;
     }
   }
@@ -76,51 +34,28 @@ export class CandidatosService {
     return candidato;
   }
 
-  async alterarCandidato(
-    id: string,
-    dados: {
-      nome?: string;
-      email?: string;
-      senha?: string;
-      numeroEleitoral?: string;
-      partido?: string;
-      cargo?: string;
-      eleicaoId?: string;
+  async alterarCandidato(id: string, dados: {
+    nome?: string; email?: string; senha?: string; numeroEleitoral?: string;
+    partido?: string; cargo?: string; eleicaoId?: string;
+  }): Promise<Candidato> {
+    const alteracoes = {
+      nome: dados.nome === undefined ? undefined : texto(dados.nome, 'Nome'),
+      email: dados.email === undefined ? undefined : emailValido(dados.email),
+      senhaHash: dados.senha === undefined ? undefined : await bcrypt.hash(senhaValida(dados.senha), 10),
+      numeroEleitoral: dados.numeroEleitoral === undefined ? undefined : numeroEleitoralValido(dados.numeroEleitoral),
+      partido: dados.partido === undefined ? undefined : texto(dados.partido, 'Partido'),
+      cargo: dados.cargo === undefined ? undefined : texto(dados.cargo, 'Cargo'),
+      eleicaoId: dados.eleicaoId === undefined ? undefined : texto(dados.eleicaoId, 'eleicaoId'),
+    };
+    try {
+      return await this.candidatosRepository.atualizar(id, alteracoes);
+    } catch (error: any) {
+      if (error.code === 'Neo.ClientError.Schema.ConstraintValidationFailed') throw new Error('Já existe um usuário cadastrado com este e-mail.');
+      throw error;
     }
-  ): Promise<Candidato> {
-    const atual = await this.consultarCandidato(id);
-
-    if (dados.cargo) {
-      const cargoValido = await this.candidatosRepository.cargoExiste(dados.cargo);
-      if (!cargoValido) throw new Error('Cargo inválido.');
-    }
-
-    const eleicaoAlvo = dados.eleicaoId || atual.eleicaoId;
-    if (dados.eleicaoId) {
-      const eleicaoValida = await this.candidatosRepository.eleicaoExiste(dados.eleicaoId);
-      if (!eleicaoValida) throw new Error('Eleição não encontrada.');
-    }
-
-    const numeroAlvo = dados.numeroEleitoral ? String(dados.numeroEleitoral) : atual.numeroEleitoral;
-    const numeroDuplicado = await this.candidatosRepository.numeroJaExisteNaEleicao(
-      eleicaoAlvo,
-      numeroAlvo,
-      id
-    );
-    if (numeroDuplicado) {
-      throw new Error('Já existe outro candidato com este número eleitoral nesta eleição.');
-    }
-
-    const senhaHash = dados.senha ? await bcrypt.hash(dados.senha, 10) : undefined;
-    return this.candidatosRepository.atualizar(id, {
-      ...dados,
-      numeroEleitoral: dados.numeroEleitoral ? String(dados.numeroEleitoral) : undefined,
-      senhaHash,
-    });
   }
 
   async excluirCandidato(id: string): Promise<void> {
-    await this.consultarCandidato(id);
     await this.candidatosRepository.excluir(id);
   }
 }

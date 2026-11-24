@@ -1,3 +1,4 @@
+import { dataValida, horarioValido, turnoValido } from '../../shared/validacao';
 import { Eleicao, EleicoesRepository } from './eleicoes.repository';
 
 export class EleicoesService {
@@ -9,16 +10,12 @@ export class EleicoesService {
     horarioAbertura: string;
     horarioEncerramento: string;
   }): Promise<Eleicao> {
-    if (!dados.data || !dados.turno || !dados.horarioAbertura || !dados.horarioEncerramento) {
-      throw new Error('Data, turno, horário de abertura e horário de encerramento são obrigatórios.');
-    }
-
-    return this.eleicoesRepository.criar({
-      data: String(dados.data),
-      turno: String(dados.turno),
-      horarioAbertura: String(dados.horarioAbertura),
-      horarioEncerramento: String(dados.horarioEncerramento),
-    });
+    const data = dataValida(dados.data);
+    const turno = turnoValido(dados.turno);
+    const horarioAbertura = horarioValido(dados.horarioAbertura);
+    const horarioEncerramento = horarioValido(dados.horarioEncerramento);
+    if (horarioEncerramento <= horarioAbertura) throw new Error('O encerramento deve ser posterior à abertura.');
+    return this.eleicoesRepository.criar({ data, turno, horarioAbertura, horarioEncerramento });
   }
 
   async listarEleicoes(): Promise<Eleicao[]> {

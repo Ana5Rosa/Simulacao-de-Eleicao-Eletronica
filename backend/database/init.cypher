@@ -33,12 +33,4 @@ UNWIND [
 ] AS nomeCargo
 MERGE (:Cargo {nome: nomeCargo});
 
-// ============================================================================
-// 3. USUÁRIO ADMINISTRADOR INICIAL (1 NÓ :Usuario:ChefeSecao)
-// ============================================================================
-
-MERGE (c:Usuario:ChefeSecao {email: 'chefe@eleicao.gov.br'})
-ON CREATE SET
-  c.id = randomUUID(),
-  c.nome = 'Chefe da Seção Principal',
-  c.senhaHash = 'PENDENTE_HASH_BACKEND';
+// O Chefe da Seção é criado pelo seed do backend, com senha do .env.

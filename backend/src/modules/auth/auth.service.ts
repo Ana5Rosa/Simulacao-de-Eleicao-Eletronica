@@ -1,16 +1,17 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { obterSegredoJWT } from '../../config/env';
 import { AuthRepository } from './auth.repository';
 
 export class AuthService {
   constructor(private authRepository = new AuthRepository()) {}
 
   async login(email: string, senha: string) {
-    if (!email || !senha) {
+    if (typeof email !== 'string' || !email.trim() || typeof senha !== 'string' || !senha) {
       throw new Error('E-mail e senha são obrigatórios.');
     }
 
-    const usuario = await this.authRepository.buscarPorEmail(email);
+    const usuario = await this.authRepository.buscarPorEmail(email.trim().toLowerCase());
     if (!usuario) {
       throw new Error('Credenciais inválidas.');
     }
@@ -20,7 +21,7 @@ export class AuthService {
       throw new Error('Credenciais inválidas.');
     }
 
-    const secret = process.env.JWT_SECRET || 'chave_secreta_eleicao_2026';
+    const secret = obterSegredoJWT();
     const token = jwt.sign(
       {
         id: usuario.id,
@@ -29,7 +30,7 @@ export class AuthService {
         perfil: usuario.perfil,
       },
       secret,
-      { expiresIn: '8h' }
+      { expiresIn: '8h', algorithm: 'HS256' }
     );
 
     return {

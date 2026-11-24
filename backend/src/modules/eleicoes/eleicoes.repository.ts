@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { getSession } from '../../config/neo4j';
+import { bloquearEleicao } from '../../shared/transacoes';
 
 export type StatusEleicao = 'AGENDADA' | 'ABERTA' | 'ENCERRADA';
 
@@ -62,13 +63,16 @@ export class EleicoesRepository {
   async atualizarStatus(id: string, novoStatus: StatusEleicao): Promise<Eleicao> {
     const session = getSession();
     try {
-      const result = await session.run(
-        `MATCH (e:Eleicao {id: $id})
-         SET e.status = $novoStatus
-         RETURN e`,
-        { id, novoStatus }
-      );
-      return result.records[0].get('e').properties as Eleicao;
+      return await session.executeWrite(async tx => {
+        const status = await bloquearEleicao(tx, id);
+        if (!((status === 'AGENDADA' && novoStatus === 'ABERTA') ||
+              (status === 'ABERTA' && novoStatus === 'ENCERRADA'))) {
+          throw new Error(`Transição de situação inválida: ${status} -> ${novoStatus}.`);
+        }
+        const result = await tx.run(`MATCH (e:Eleicao {id: $id})
+          SET e.status = $novoStatus RETURN e`, { id, novoStatus });
+        return result.records[0].get('e').properties as Eleicao;
+      });
     } finally {
       await session.close();
     }

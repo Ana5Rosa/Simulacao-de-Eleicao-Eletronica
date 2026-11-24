@@ -1,6 +1,6 @@
 # 🗳️ Sistema de Simulação de Eleição Eletrônica - Back-End
 
-API RESTful desenvolvida em **Node.js**, **TypeScript** e **Neo4j (Banco de Dados Orientado a Grafos)** para simular o ciclo completo de uma eleição eletrônica: administração do pleito, cadastro de participantes, votação com sigilo garantido, acompanhamento em tempo real e apuração final dos resultados.
+API RESTful desenvolvida em **Node.js**, **TypeScript** e **Neo4j (Banco de Dados Orientado a Grafos)** para simular o ciclo completo de uma eleição eletrônica: administração do pleito, cadastro de participantes, votação com separação dos dados de participação e de voto, acompanhamento em tempo real e apuração final dos resultados.
 
 ---
 
@@ -22,7 +22,7 @@ A aplicação adota uma **Arquitetura em Camadas Orientada a Domínio (Modular L
 ```mermaid
 flowchart TD
     subgraph Clientes["Clientes e Ferramentas de Teste"]
-        FE["Front-End (Ionic + React)"]
+        FE["Cliente externo (opcional, não incluído)"]
         SW["Swagger UI (/api-docs)"]
         IN["Insomnia / Postman"]
     end
@@ -61,8 +61,9 @@ flowchart TD
 
 ### Decisões Arquiteturais Relevantes
 1. **Separação entre `app.ts` e `server.ts`:** A configuração do Express (rotas, middlewares e Swagger) fica isolada em `src/app.ts`, enquanto a conexão com o banco, execução do *seed* e abertura da porta HTTP ficam em `src/server.ts`. Isso permite que os testes de integração importem a aplicação sem precisar abrir portas de rede.
-2. **Controle de Acesso Baseado em Perfis (RBAC):** Implementado via middleware (`authMiddleware.ts`), que decodifica o JWT e valida se o perfil autenticado (`ChefeSecao`, `Eleitor` ou `Candidato`) possui autorização para acessar o recurso solicitado.
-3. **Seed Automático Idempotente (`src/config/seed.ts`):** Ao iniciar, o servidor garante a existência dos 5 cargos oficiais e do usuário administrador inicial (`ChefeSecao`) utilizando operações `MERGE` no Neo4j.
+2. **Controle de Acesso Baseado em Perfis (RBAC):** Implementado via middleware (`authMiddleware.ts`), que verifica a assinatura do JWT, confirma a existência e o estado ativo do usuário no banco e valida se o perfil autenticado (`ChefeSecao`, `Eleitor` ou `Candidato`) possui autorização para acessar o recurso solicitado.
+3. **Constraints automáticas:** O servidor cria as seis restrições de unicidade antes de aceitar requisições.
+4. **Seed Automático Idempotente (`src/config/seed.ts`):** Ao iniciar, o servidor garante a existência dos 5 cargos oficiais e do usuário administrador inicial (`ChefeSecao`) utilizando operações `MERGE` no Neo4j.
 
 ---
 
@@ -73,13 +74,18 @@ O código-fonte dentro de `backend/` está dividido em módulos funcionais indep
 ```text
 backend/
 ├── database/
-│   └── init.cypher                 # Script de constraints e carga inicial do Neo4j
+│   ├── init.cypher                 # Script de constraints e cargos
+│   └── migracao-sigilo.cypher      # Remoção opcional de horários antigos
 ├── src/
 │   ├── config/
 │   │   ├── neo4j.ts                # Conexão e gerenciamento de sessões com AuraDB
+│   │   ├── constraints.ts          # Restrições de unicidade
+│   │   ├── env.ts                  # Validação da chave JWT
 │   │   ├── seed.ts                 # Inicialização automática de cargos e Chefe da Seção
 │   │   └── swagger.ts              # Especificação OpenAPI 3.0 e configuração do Swagger UI
 │   ├── shared/
+│   │   ├── validacao.ts             # Validação de entradas
+│   │   ├── transacoes.ts            # Locks transacionais compartilhados
 │   │   └── middlewares/
 │   │       └── authMiddleware.ts   # Autenticação JWT e autorização por perfil
 │   ├── modules/
@@ -93,16 +99,18 @@ backend/
 │   └── server.ts                   # Ponto de entrada (bootstrap do servidor)
 └── tests/
     ├── unit/
-    │   └── regras-negocio.test.ts  # Testes unitários isolados das camadas Service
+    │   ├── regras-negocio.test.ts  # Testes unitários de serviços
+    │   └── transacoes.test.ts      # Testes unitários de repositórios com mocks
     └── integration/
-        └── api.test.ts             # Testes de integração HTTP (rotas, JWT e perfis)
+        ├── api.test.ts             # Integração HTTP com banco simulado
+        └── neo4j.test.ts           # Integração HTTP com Neo4j real (opt-in)
 ```
 
 ### Responsabilidade de Cada Módulo
 * **`auth`:** Autentica `ChefeSecao`, `Eleitor` e `Candidato` por e-mail e senha (`bcryptjs`), gerando um token JWT contendo o perfil do usuário.
 * **`eleicoes`:** Permite ao Chefe da Seção cadastrar eleições (data, turno, horários) e gerenciar suas transições de estado (`AGENDADA` → `ABERTA` → `ENCERRADA`), além de permitir consulta da situação atual.
-* **`eleitores`:** CRUD completo restrito ao Chefe da Seção para gerenciar os eleitores aptos a votar.
-* **`candidatos`:** CRUD restrito ao Chefe da Seção para cadastrar candidatos com número eleitoral e partido, criando no grafo os vínculos com `:Cargo` e `:Eleicao`. Também expõe listagem filtrável para os eleitores.
+* **`eleitores`:** CRUD restrito ao Chefe da Seção. A exclusão lógica desativa o eleitor, remove a senha e preserva o histórico de participação.
+* **`candidatos`:** CRUD restrito ao Chefe da Seção para cadastrar candidatos com número eleitoral e partido, criando no grafo os vínculos com `:Cargo` e `:Eleicao`. Cadastro, alteração e exclusão somente em eleições AGENDADAS. Também expõe listagem filtrável para os eleitores.
 * **`votacao`:** Exclusivo para o perfil `Eleitor`. Valida se a eleição está `ABERTA`, registra o voto de forma sigilosa e impede votos duplicados para o mesmo cargo ou alterações posteriores.
 * **`resultados`:** Gerencia o acompanhamento em tempo real (aplicando filtro automático para exibir ao `Candidato` apenas o cargo ao qual concorre) e a apuração do resultado final com o candidato mais votado após o encerramento.
 
@@ -136,12 +144,12 @@ graph LR
 | Rótulo (Label) | Propriedades Principais | Descrição |
 | :--- | :--- | :--- |
 | **`:Usuario:ChefeSecao`** | `id` (UUID), `nome`, `email`, `senhaHash` | Administrador responsável por gerenciar eleições, eleitores e candidatos. |
-| **`:Usuario:Eleitor`** | `id` (UUID), `nome`, `email`, `senhaHash`, `tituloEleitor` | Usuário habilitado a votar uma vez por cargo quando a eleição está `ABERTA`. |
+| **`:Usuario:Eleitor`** | `id` (UUID), `nome`, `email`, `senhaHash`, `tituloEleitor`, `ativo` | Usuário habilitado a votar uma vez por cargo quando a eleição está `ABERTA`. |
 | **`:Usuario:Candidato`** | `id` (UUID), `nome`, `email`, `senhaHash`, `numeroEleitoral`, `partido` | Usuário que concorre a um cargo específico em uma eleição. |
 | **`:Eleicao`** | `id` (UUID), `data`, `turno`, `horarioAbertura`, `horarioEncerramento`, `status` | Representa o pleito (`AGENDADA`, `ABERTA` ou `ENCERRADA`). |
 | **`:Cargo`** | `nome` | Os 5 cargos fixos: *Deputado Estadual*, *Deputado Federal*, *Senador*, *Governador* e *Presidente da República*. |
-| **`:Voto`** | `id` (UUID), `confirmadoEm` | Voto anônimo contabilizado na apuração. Não possui referência ao eleitor. |
-| **`:RegistroParticipacao`** | `chaveUnica`, `registradoEm` | Nó isolado com chave composta (`${eleitorId}_${eleicaoId}_${cargo}`) para controle de voto único. |
+| **`:Voto`** | `id` (UUID) | Voto anônimo contabilizado na apuração. Não possui referência ao eleitor. |
+| **`:RegistroParticipacao`** | `chaveUnica` | Nó isolado com chave composta (`${eleitorId}_${eleicaoId}_${cargo}`) para controle de voto único. |
 
 ### Descrição dos Relacionamentos
 
@@ -151,11 +159,15 @@ graph LR
 * `(:Voto)-[:NA_ELEICAO]->(:Eleicao)`: Associa o voto à eleição correspondente.
 
 ### Garantia de Sigilo e Restrições de Integridade (`database/init.cypher`)
-Para atender simultaneamente à **unicidade do voto por cargo** e ao **sigilo absoluto**, o sistema não cria nenhuma aresta entre `:Eleitor` e `:Voto`. Durante a confirmação do voto, uma transação atômica cria:
+Para atender simultaneamente à **unicidade do voto por cargo** e à **separação de identidade e escolha**, o sistema não cria nenhuma aresta entre `:Eleitor` e `:Voto`. Durante a confirmação do voto, uma transação atômica cria:
 1. Um nó `:RegistroParticipacao` com `chaveUnica = "${eleitorId}_${eleicaoId}_${cargo}"`, protegido por uma *Unique Constraint* no Neo4j. Se o eleitor tentar votar novamente no mesmo cargo, o banco rejeita a transação.
-2. Um nó anônimo `:Voto` ligado apenas ao candidato e à eleição, impossibilitando rastrear em quem o eleitor votou.
+2. Um nó anônimo `:Voto` ligado apenas ao candidato e à eleição. Não são gravados horários individuais nem devolvido o ID do voto. A API não oferece consulta por eleitor.
 
-Restrições aplicadas no banco:
+A eleição é bloqueada para escrita antes de validar o estado dentro da mesma transação do voto. Abertura, encerramento e alterações de candidatos usam a mesma trava; o eleitor também é bloqueado durante o voto para sincronizar sua exclusão. As operações de cadastro e alteração dos candidatos verificam o número eleitoral dentro da transação. O bloqueio é implementado com propriedade temporária, conforme [documentação do Neo4j](https://neo4j.com/docs/operations-manual/current/database-internals/concurrent-data-access/).
+
+**Limite do sigilo:** este é um simulador acadêmico, não uma urna de produção. A contagem exata em tempo real, logs administrativos, observação de requisições e dados históricos podem permitir inferências. Não há garantia de anonimato criptográfico absoluto.
+
+Restrições aplicadas automaticamente no banco:
 * `usuario_id_unico` (`:Usuario.id`) e `usuario_email_unico` (`:Usuario.email`)
 * `eleicao_id_unico` (`:Eleicao.id`)
 * `cargo_nome_unico` (`:Cargo.nome`)
@@ -183,41 +195,29 @@ Restrições aplicadas no banco:
 ## 5. Como Executar o Projeto
 
 ### Pré-requisitos
-* Node.js (v18 ou superior)
-* Uma instância gratuita do **Neo4j AuraDB Free** (ou Neo4j local)
+* Node.js 22 ou superior (confira também os requisitos das dependências do `package-lock.json`).
+* Uma instância Neo4j AuraDB ou Neo4j local, com permissão para criar constraints.
 
-### Passo a Passo
-1. **Clone o repositório e acesse a pasta do Back-End:**
-   ```bash
-   git clone <URL_DO_SEU_REPOSITORIO>
-   cd Simulacao-de-Eleicao-Eletronica/backend
+### Passo a passo (Windows / PowerShell)
+1. Extraia o projeto ou clone seu repositório Git e abra a pasta `backend` no terminal.
+2. Instale as dependências e copie o modelo de configuração:
+   ```powershell
+   npm ci
+   Copy-Item .env.example .env
    ```
-
-2. **Instale as dependências:**
-   ```bash
-   npm install
+3. Gere uma chave JWT e preencha o `.env`:
+   ```powershell
+   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
    ```
-
-3. **Configure as variáveis de ambiente:**
-   Crie um arquivo `.env` na raiz de `backend/` baseado no exemplo abaixo:
-   ```env
-   PORT=3000
-   JWT_SECRET="chave_secreta_eleicao_2026"
-   NEO4J_URI="neo4j+s://SEU_ID.databases.neo4j.io"
-   NEO4J_USERNAME="neo4j"
-   NEO4J_PASSWORD="SUA_SENHA_DO_AURADB"
-   CHEFE_EMAIL="chefe@eleicao.gov.br"
-   CHEFE_SENHA="admin123"
-   ```
-
-4. **Configure as constraints no Neo4j:**
-   Execute o conteúdo do arquivo `backend/database/init.cypher` no console **Query** do seu Neo4j AuraDB.
-
-5. **Inicie o servidor em modo de desenvolvimento:**
-   ```bash
+   Informe a chave gerada em `JWT_SECRET`, os dados da sua instância Neo4j em `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, e o e-mail e senha do administrador em `CHEFE_EMAIL`, `CHEFE_SENHA`. A senha deve ter pelo menos 8 caracteres (máximo 72 bytes). Não publique o `.env`. O seed usa a senha configurada a cada inicialização.
+4. Compile e inicie:
+   ```powershell
+   npm run build
    npm run dev
    ```
-   O servidor iniciará em `http://localhost:3000` e criará automaticamente os cargos e o Chefe da Seção inicial.
+   O servidor verifica o banco e cria automaticamente as constraints, os cinco cargos e o Chefe da Seção. O script `database/init.cypher` continua disponível para execução manual, mas não é necessário em um banco novo.
+
+**Banco já utilizado pela versão antiga:** leia `CORRECOES.md` antes de atualizar; há uma migração de privacidade opcional e verificações de integridade. Use preferencialmente um banco novo para a demonstração.
 
 ---
 
@@ -227,7 +227,7 @@ Com o servidor em execução, acesse a documentação interativa no navegador:
 * **URL:** `http://localhost:3000/api-docs`
 
 ### Como testar rotas protegidas no Swagger:
-1. Execute o endpoint `POST /auth/login` com as credenciais do Chefe da Seção (`chefe@eleicao.gov.br` / `admin123`) ou de um usuário cadastrado.
+1. Execute o endpoint `POST /auth/login` com as credenciais do Chefe da Seção (e-mail e senha definidos no `.env`) ou de um usuário cadastrado.
 2. Copie o valor do campo `token` retornado.
 3. Clique no botão **Authorize** no topo direito da página do Swagger, cole o token e clique em **Authorize**.
 
@@ -253,80 +253,26 @@ Com o servidor em execução, acesse a documentação interativa no navegador:
 
 ## 7. Testes Automatizados
 
-A suíte de testes foi desenvolvida com **Jest (`ts-jest`)** e **Supertest**, dividida em duas camadas distintas dentro de `backend/tests/` para separar a validação isolada das regras de negócio da validação dos fluxos HTTP e de segurança:
+| Arquivo | Tipo | Escopo |
+|---|---|---|
+| `tests/unit/regras-negocio.test.ts` | Unitário | Validação dos serviços, datas/horários/turno, resultado, confirmação sem protocolo |
+| `tests/unit/transacoes.test.ts` | Unitário | Repositórios com driver simulado: locks, validação antes da gravação, duplicidade, exclusão e transferência de candidatos |
+| `tests/integration/api.test.ts` | Integração HTTP | Express, JWT e perfis com consulta de usuário simulada |
+| `tests/integration/neo4j.test.ts` | Integração real | Login, CRUD, concorrência, votação, sigilo estrutural e apuração usando o banco |
 
-```text
-backend/tests/
-├── unit/
-│   └── regras-negocio.test.ts   # 6 testes unitários (camada Service com mocks)
-└── integration/
-    └── api.test.ts              # 4 testes de integração (rotas HTTP, JWT e RBAC)
+### Execução padrão (sem banco)
+```powershell
+npm test -- --runInBand
 ```
+O teste com Neo4j real fica marcado como `skipped` por padrão. Os testes unitários e HTTP não precisam de uma conexão de banco.
 
----
-
-### 7.1 Testes Unitários (`tests/unit/regras-negocio.test.ts`)
-
-Os testes unitários validam exclusivamente as regras de negócio contidas nas classes `*Service`, simulando (*mockando*) os repositórios (`*Repository`) para executar de forma rápida e determinística sem depender de rede ou conexão ativa com o Neo4j:
-
-#### `VotacaoService`
-1. **Bloqueio de voto fora do período de votação (`deve impedir voto quando a eleição não estiver ABERTA`):**
-   * **Cenário:** Simula uma eleição com status `AGENDADA` no banco.
-   * **Validação:** Garante que o método `confirmarVoto` lança uma exceção (`"Votação não permitida. A eleição está atualmente AGENDADA."`) e confirma que o método de gravação no banco (`registrarVotoSigiloso`) **não** é chamado.
-2. **Prevenção de voto duplicado por cargo (`deve impedir voto duplicado do mesmo eleitor para o mesmo cargo`):**
-   * **Cenário:** Simula a falha de unicidade do Neo4j (`Neo.ClientError.Schema.ConstraintValidationFailed`) disparada pela chave composta de `:RegistroParticipacao` (`eleitorId_eleicaoId_cargo`).
-   * **Validação:** Garante que o serviço intercepta o erro técnico do banco e retorna uma mensagem clara ao eleitor impedindo um segundo voto para o mesmo cargo naquela eleição.
-
-#### `ResultadosService`
-3. **Restrição de acompanhamento por cargo para Candidatos (`deve restringir o acompanhamento do Candidato apenas ao seu próprio cargo`):**
-   * **Cenário:** Um usuário autenticado com perfil `Candidato` (concorrendo a *Governador*) solicita o acompanhamento parcial da votação.
-   * **Validação:** Verifica se o serviço consulta o cargo do candidato e repassa obrigatoriamente o filtro `'Governador'` ao repositório (`contabilizarVotos('eleicao-1', 'Governador')`), ocultando os resultados dos demais cargos.
-4. **Bloqueio do resultado final antes do encerramento (`deve bloquear consulta do resultado final enquanto a eleição estiver ABERTA`):**
-   * **Cenário:** Solicitação de apuração final enquanto o status da eleição ainda é `ABERTA`.
-   * **Validação:** Garante que o serviço bloqueia a operação e informa que o resultado final só fica disponível após o encerramento da votação.
-5. **Apuração e identificação do vencedor após encerramento (`deve apontar o candidato mais votado por cargo quando a eleição estiver ENCERRADA`):**
-   * **Cenário:** Simula uma eleição com status `ENCERRADA` e dois candidatos disputando *Presidente da República* (42 votos contra 30 votos).
-   * **Validação:** Confirma que o serviço agrupa os candidatos por cargo e identifica corretamente o candidato com maior número de votos no campo `maisVotado`.
-
-#### `EleicoesService`
-6. **Validação do ciclo de vida da eleição (`deve impedir encerrar uma eleição que ainda está AGENDADA`):**
-   * **Cenário:** Tentativa de chamar `encerrarVotacao` em uma eleição que ainda não foi aberta (`status: 'AGENDADA'`).
-   * **Validação:** Garante que a transição inválida é bloqueada, exigindo que a eleição passe primeiro pelo estado `ABERTA`.
-
----
-
-### 7.2 Testes de Integração (`tests/integration/api.test.ts`)
-
-Os testes de integração utilizam o **Supertest** para disparar requisições HTTP reais contra a instância do Express (`src/app.ts`), validando o encadeamento entre rotas, middlewares de autenticação JWT, controle de acesso por perfil (RBAC) e respostas HTTP:
-
-1. **Verificação de disponibilidade da API (`GET /health deve retornar status 200`):**
-   * **Cenário:** Requisição `GET` para a rota pública `/health`.
-   * **Validação:** Confirma que o servidor Express está ativo e respondendo corretamente em JSON (`status: "OK"`).
-2. **Bloqueio de acesso não autenticado (`POST /eleicoes sem token JWT deve retornar 401`):**
-   * **Cenário:** Requisição `POST /eleicoes` enviada sem o cabeçalho `Authorization: Bearer <token>`.
-   * **Validação:** Confirma que o middleware `autenticarJWT` intercepta a chamada e retorna HTTP `401 Unauthorized`.
-3. **Controle de perfil na criação de eleição (`POST /eleicoes com perfil Eleitor deve retornar 403`):**
-   * **Cenário:** Requisição `POST /eleicoes` autenticada com um token JWT válido pertencente ao perfil `Eleitor`.
-   * **Validação:** Confirma que o middleware `exigirPerfil('ChefeSecao')` bloqueia a ação e retorna HTTP `403 Forbidden`, garantindo que apenas o Chefe da Seção administre eleições.
-4. **Controle de perfil na votação (`POST /votacao com perfil ChefeSecao deve retornar 403`):**
-   * **Cenário:** Requisição `POST /votacao` autenticada com um token JWT pertencente ao perfil `ChefeSecao`.
-   * **Validação:** Confirma que o middleware `exigirPerfil('Eleitor')` impede que administradores ou candidatos registrem votos, retornando HTTP `403 Forbidden`.
-
----
-
-### Como Executar os Testes
-
-Dentro da pasta `backend/`, execute:
-
-```bash
-npm test
+### Execução com Neo4j real
+Configure o `.env` para uma instância **separada de testes**. Em PowerShell:
+```powershell
+$env:RUN_NEO4J_TESTS = '1'
+npm test -- --runInBand
+Remove-Item Env:RUN_NEO4J_TESTS
 ```
+A suíte de integração cria dados identificados exclusivamente para o teste e tenta removê-los ao final. Também garante a criação de constraints e dos cargos. Não utilize a instância de produção ou com dados importantes.
 
-**Saída esperada:**
-```text
-PASS  tests/unit/regras-negocio.test.ts
-PASS  tests/integration/api.test.ts
-
-Test Suites: 2 passed, 2 total
-Tests:       10 passed, 10 total
-```
+A compilação e a execução completa dos testes precisam ser confirmadas em um ambiente com dependências instaladas. Consulte `CORRECOES.md` para as verificações realizadas e as pendências.

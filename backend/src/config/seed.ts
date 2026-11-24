@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'crypto';
+import { emailValido, senhaValida } from '../shared/validacao';
 import { getSession } from './neo4j';
 
 export const executarSeedInicial = async (): Promise<void> => {
@@ -21,8 +22,8 @@ export const executarSeedInicial = async (): Promise<void> => {
     );
 
     // 2. Garante o Chefe da Seção inicial com hash seguro
-    const emailChefe = process.env.CHEFE_EMAIL || 'chefe@eleicao.gov.br';
-    const senhaPlana = process.env.CHEFE_SENHA || 'admin123';
+    const emailChefe = emailValido(process.env.CHEFE_EMAIL);
+    const senhaPlana = senhaValida(process.env.CHEFE_SENHA);
     const senhaHash = await bcrypt.hash(senhaPlana, 10);
 
     await session.run(

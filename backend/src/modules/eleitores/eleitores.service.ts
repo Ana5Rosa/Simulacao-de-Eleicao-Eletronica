@@ -1,3 +1,4 @@
+import { texto, emailValido, senhaValida } from '../../shared/validacao';
 import bcrypt from 'bcryptjs';
 import { Eleitor, EleitoresRepository } from './eleitores.repository';
 
@@ -10,16 +11,13 @@ export class EleitoresService {
     senha: string;
     tituloEleitor?: string;
   }): Promise<Eleitor> {
-    if (!dados.nome || !dados.email || !dados.senha) {
-      throw new Error('Nome, e-mail e senha são obrigatórios para cadastrar um eleitor.');
-    }
-    const senhaHash = await bcrypt.hash(dados.senha, 10);
+    const nome = texto(dados.nome, 'Nome');
+    const email = emailValido(dados.email);
+    const senhaHash = await bcrypt.hash(senhaValida(dados.senha), 10);
+    const tituloEleitor = dados.tituloEleitor === undefined ? undefined : texto(dados.tituloEleitor, 'Título de eleitor');
     try {
       return await this.eleitoresRepository.criar({
-        nome: dados.nome,
-        email: dados.email,
-        senhaHash,
-        tituloEleitor: dados.tituloEleitor,
+        nome, email, senhaHash, tituloEleitor,
       });
     } catch (error: any) {
       if (error.code === 'Neo.ClientError.Schema.ConstraintValidationFailed') {
@@ -44,13 +42,13 @@ export class EleitoresService {
     dados: { nome?: string; email?: string; senha?: string; tituloEleitor?: string }
   ): Promise<Eleitor> {
     await this.consultarEleitor(id);
-    const senhaHash = dados.senha ? await bcrypt.hash(dados.senha, 10) : undefined;
+    const senhaHash = dados.senha === undefined ? undefined : await bcrypt.hash(senhaValida(dados.senha), 10);
     try {
       return await this.eleitoresRepository.atualizar(id, {
-        nome: dados.nome,
-        email: dados.email,
+        nome: dados.nome === undefined ? undefined : texto(dados.nome, 'Nome'),
+        email: dados.email === undefined ? undefined : emailValido(dados.email),
         senhaHash,
-        tituloEleitor: dados.tituloEleitor,
+        tituloEleitor: dados.tituloEleitor === undefined ? undefined : texto(dados.tituloEleitor, 'Título de eleitor'),
       });
     } catch (error: any) {
       if (error.code === 'Neo.ClientError.Schema.ConstraintValidationFailed') {

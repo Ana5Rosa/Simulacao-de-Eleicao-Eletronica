@@ -1,9 +1,19 @@
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
 import app from '../../src/app';
-import { driver } from '../../src/config/neo4j';
+import { getSession } from '../../src/config/neo4j';
 
-const secret = process.env.JWT_SECRET || 'chave_secreta_eleicao_2026';
+jest.mock('../../src/config/neo4j', () => ({ getSession: jest.fn() }));
+
+const secret = 'chave-exclusiva-testes-http-sem-uso-em-producao';
+const originalSecret = process.env.JWT_SECRET;
+beforeAll(() => { process.env.JWT_SECRET = secret; });
+beforeEach(() => {
+  (getSession as jest.Mock).mockReturnValue({
+    run: jest.fn().mockResolvedValue({ records: [{ get: (campo: string) => ({ id: 'user-test-id', email: 'teste@eleicao.com', nome: 'Teste' } as Record<string, string>)[campo] }] }),
+    close: jest.fn().mockResolvedValue(undefined),
+  });
+});
 
 const gerarTokenTeste = (perfil: 'ChefeSecao' | 'Eleitor' | 'Candidato') => {
   return jwt.sign(
@@ -62,7 +72,17 @@ describe('Testes de Integração - Rotas, Autenticação e Perfis (HTTP)', () =>
         expect(res.status).toBe(403);
     });
 
-  afterAll(async () => {
-    await driver.close();
+  it('POST /votacao com perfil Candidato deve retornar 403', async () => {
+    const res = await request(app).post('/votacao').set('Authorization', `Bearer ${gerarTokenTeste('Candidato')}`).send({});
+    expect(res.status).toBe(403);
+  });
+  it('deve recusar token de usuário que foi excluído', async () => {
+    (getSession as jest.Mock).mockReturnValueOnce({ run: jest.fn().mockResolvedValue({ records: [] }), close: jest.fn().mockResolvedValue(undefined) });
+    const res = await request(app).post('/votacao').set('Authorization', `Bearer ${gerarTokenTeste('Eleitor')}`).send({});
+    expect(res.status).toBe(401);
+  });
+  afterAll(() => {
+    if (originalSecret === undefined) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = originalSecret;
   });
 });

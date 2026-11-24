@@ -15,7 +15,11 @@ export class VotacaoController {
       });
       res.status(201).json(resultado);
     } catch (error: any) {
-      res.status(400).json({ erro: error.message });
+      if (error.code) {
+        res.status(503).json({ erro: 'Não foi possível concluir a operação no banco de dados.' });
+      } else {
+        res.status(400).json({ erro: error.message });
+      }
     }
   };
 
@@ -26,7 +30,11 @@ export class VotacaoController {
       const status = await this.votacaoService.consultarCargosVotados(eleitorId, eleicaoId);
       res.status(200).json(status);
     } catch (error: any) {
-      res.status(400).json({ erro: error.message });
+      if (error.code) {
+        res.status(503).json({ erro: 'Não foi possível concluir a operação no banco de dados.' });
+      } else {
+        res.status(400).json({ erro: error.message });
+      }
     }
   };
 }
