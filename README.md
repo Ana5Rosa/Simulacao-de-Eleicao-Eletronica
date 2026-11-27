@@ -84,10 +84,12 @@ backend/
 │   │   ├── seed.ts                 # Inicialização automática de cargos e Chefe da Seção
 │   │   └── swagger.ts              # Especificação OpenAPI 3.0 e configuração do Swagger UI
 │   ├── shared/
-│   │   ├── validacao.ts             # Validação de entradas
+│   │   ├── errors.ts                # Erros de domínio e mapeamento HTTP padronizado
+│   │   ├── validacao.ts             # Validação de entradas e cargos oficiais
 │   │   ├── transacoes.ts            # Locks transacionais compartilhados
 │   │   └── middlewares/
-│   │       └── authMiddleware.ts   # Autenticação JWT e autorização por perfil
+│   │       ├── authMiddleware.ts   # Autenticação JWT e autorização por perfil
+│   │       └── errorHandler.ts     # Tratamento global de 404 e JSON inválido
 │   ├── modules/
 │   │   ├── auth/                   # Módulo 1: Login e emissão de token JWT
 │   │   ├── eleicoes/               # Módulo 2: Cadastro, abertura, encerramento e status
@@ -99,11 +101,12 @@ backend/
 │   └── server.ts                   # Ponto de entrada (bootstrap do servidor)
 └── tests/
     ├── unit/
-    │   ├── regras-negocio.test.ts  # Testes unitários de serviços
-    │   └── transacoes.test.ts      # Testes unitários de repositórios com mocks
+    │   ├── regras-negocio.test.ts        # Testes unitários das regras de negócio
+    │   ├── validacao-e-cadastros.test.ts # Testes unitários de validação, auth e cadastros
+    │   └── transacoes.test.ts            # Testes unitários de repositórios com mocks
     └── integration/
-        ├── api.test.ts             # Integração HTTP com banco simulado
-        └── neo4j.test.ts           # Integração HTTP com Neo4j real (opt-in)
+        ├── api.test.ts                   # Integração HTTP com banco simulado
+        └── neo4j.test.ts                 # Integração HTTP com Neo4j real (opt-in)
 ```
 
 ### Responsabilidade de Cada Módulo
@@ -224,6 +227,7 @@ Restrições aplicadas automaticamente no banco:
 Acesse a documentação interativa no navegador:
 * **Swagger público (Render):** [https://simulacao-de-eleicao-eletronica.onrender.com/api-docs/](https://simulacao-de-eleicao-eletronica.onrender.com/api-docs/)
 * **Swagger local (com o servidor em execução):** `http://localhost:3000/api-docs`
+* **Especificação OpenAPI JSON (importação no Postman/Insomnia):** `http://localhost:3000/api-docs.json`
 * **Repositório:** [GitHub — Simulação de Eleição Eletrônica](https://github.com/prg95/Simulacao-de-Eleicao-Eletronica)
 
 A especificação OpenAPI utiliza `servers: [{ url: '/' }]`, permitindo que as requisições sejam enviadas à origem atual da documentação, tanto localmente quanto na hospedagem.
@@ -237,6 +241,7 @@ A especificação OpenAPI utiliza `servers: [{ url: '/' }]`, permitindo que as r
 
 | Método | Rota | Perfil Autorizado | Descrição |
 | :--- | :--- | :--- | :--- |
+| `GET` | `/health` | Público | Verifica disponibilidade da API |
 | `POST` | `/auth/login` | Público | Autentica usuário e retorna token JWT |
 | `POST` | `/eleicoes` | `ChefeSecao` | Cadastra nova eleição (status `AGENDADA`) |
 | `GET` | `/eleicoes` | Todos autenticados | Lista todas as eleições |
@@ -247,7 +252,7 @@ A especificação OpenAPI utiliza `servers: [{ url: '/' }]`, permitindo que as r
 | `POST/PUT/DELETE` | `/candidatos` | `ChefeSecao` | Gerenciamento de candidatos e vínculos |
 | `GET` | `/candidatos` | Todos autenticados | Lista candidatos (filtros: `eleicaoId`, `cargo`) |
 | `POST` | `/votacao` | `Eleitor` | Registra e confirma voto sigiloso |
-| `GET` | `/votacao/meus-status/:eleicaoId` | `Eleitor` | Lista cargos em que o eleitor já votou |
+| `GET` | `/votacao/meus-status/:eleicaoId` | `Eleitor` | Lista cargos votados e pendentes |
 | `GET` | `/resultados/:eleicaoId/acompanhamento` | Todos autenticados | Contabilização parcial (filtrada para `Candidato`) |
 | `GET` | `/resultados/:eleicaoId/final` | Todos autenticados | Apuração final e vencedor por cargo (`ENCERRADA`) |
 
@@ -257,9 +262,10 @@ A especificação OpenAPI utiliza `servers: [{ url: '/' }]`, permitindo que as r
 
 | Arquivo | Tipo | Escopo |
 |---|---|---|
-| `tests/unit/regras-negocio.test.ts` | Unitário | Validação dos serviços, datas/horários/turno, resultado, confirmação sem protocolo |
+| `tests/unit/regras-negocio.test.ts` | Unitário | Validação dos serviços de votação, eleições e apuração de resultados |
+| `tests/unit/validacao-e-cadastros.test.ts` | Unitário | Validação de entradas, cargos oficiais, autenticação, eleitores e candidatos |
 | `tests/unit/transacoes.test.ts` | Unitário | Repositórios com driver simulado: locks, validação antes da gravação, duplicidade, exclusão e transferência de candidatos |
-| `tests/integration/api.test.ts` | Integração HTTP | Express, JWT e perfis com consulta de usuário simulada |
+| `tests/integration/api.test.ts` | Integração HTTP | Express, OpenAPI JSON, tratamento global de erros, JWT e perfis com banco simulado |
 | `tests/integration/neo4j.test.ts` | Integração real | Login, CRUD, concorrência, votação, sigilo estrutural e apuração usando o banco |
 
 ### Execução padrão (sem banco)
@@ -279,17 +285,14 @@ A suíte de integração cria dados identificados exclusivamente para o teste e 
 
 ### Resultados da validação
 
-A execução completa dos testes, a compilação e a inicialização do servidor foram validadas no ambiente local (Windows / PowerShell), com as dependências instaladas e conexão com o Neo4j AuraDB.
+A execução dos testes unitários e de integração HTTP (sem banco externo) e a compilação TypeScript foram validadas após as melhorias de validação, tratamento de erros e documentação OpenAPI:
 
 | Verificação | Resultado |
 |---|---|
-| Suítes de testes automatizados | 4 de 4 aprovadas |
-| Testes automatizados (incluindo integração real com Neo4j) | 28 de 28 aprovados |
-| Testes funcionais manuais pelo Swagger | Roteiro principal aprovado |
+| Suítes unitárias e de integração HTTP (`npm test -- --runInBand`) | 4 suítes aprovadas (60 testes aprovados; 1 suíte Neo4j real ignorada por padrão) |
 | Compilação TypeScript (`npm run build`) | Concluída sem erros |
-| Execução do JavaScript compilado (`node dist/src/server.js`) | Validada |
-| Deploy no Render | Concluído |
-| Login como Chefe da Seção e consulta de eleições na API hospedada | Validados |
+
+*(Validação anterior em ambiente com Neo4j AuraDB ativo e deploy no Render: suíte real com Neo4j aprovada na versão base, testes funcionais manuais pelo Swagger e execução de `node dist/src/server.js` validados.)*
 
 Os testes manuais abrangeram autenticação dos três perfis, CRUD de eleitores e candidatos, validações de cadastro, abertura e encerramento da eleição, votação nos cinco cargos, bloqueio de votos duplicados e fora do período de votação (conforme o estado da eleição), acompanhamento por perfil, consulta do resultado final e bloqueio de acesso sem autenticação. A contagem observada durante a simulação foi de cinco votos válidos, um por cargo.
 
