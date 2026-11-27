@@ -1,5 +1,13 @@
-import { texto, emailValido, senhaValida } from '../../shared/validacao';
 import bcrypt from 'bcryptjs';
+import { erroConflito, erroNaoEncontrado } from '../../shared/errors';
+import {
+  emailValido,
+  exigirAlgumCampoAtualizacao,
+  objetoObrigatorio,
+  senhaValida,
+  texto,
+  tituloEleitorValido,
+} from '../../shared/validacao';
 import { Eleitor, EleitoresRepository } from './eleitores.repository';
 
 export class EleitoresService {
@@ -11,17 +19,22 @@ export class EleitoresService {
     senha: string;
     tituloEleitor?: string;
   }): Promise<Eleitor> {
-    const nome = texto(dados.nome, 'Nome');
-    const email = emailValido(dados.email);
-    const senhaHash = await bcrypt.hash(senhaValida(dados.senha), 10);
-    const tituloEleitor = dados.tituloEleitor === undefined ? undefined : texto(dados.tituloEleitor, 'Título de eleitor');
+    const entrada = objetoObrigatorio(dados);
+    const nome = texto(entrada.nome, 'Nome');
+    const email = emailValido(entrada.email);
+    const senhaHash = await bcrypt.hash(senhaValida(entrada.senha), 10);
+    const tituloEleitor =
+      entrada.tituloEleitor === undefined ? undefined : tituloEleitorValido(entrada.tituloEleitor);
     try {
       return await this.eleitoresRepository.criar({
-        nome, email, senhaHash, tituloEleitor,
+        nome,
+        email,
+        senhaHash,
+        tituloEleitor,
       });
     } catch (error: any) {
       if (error.code === 'Neo.ClientError.Schema.ConstraintValidationFailed') {
-        throw new Error('Já existe um utilizador registado com este e-mail.');
+        throw erroConflito('Já existe um usuário cadastrado com este e-mail.');
       }
       throw error;
     }
@@ -32,8 +45,9 @@ export class EleitoresService {
   }
 
   async consultarEleitor(id: string): Promise<Eleitor> {
-    const eleitor = await this.eleitoresRepository.buscarPorId(id);
-    if (!eleitor) throw new Error('Eleitor não encontrado.');
+    const eleitorId = texto(id, 'id');
+    const eleitor = await this.eleitoresRepository.buscarPorId(eleitorId);
+    if (!eleitor) throw erroNaoEncontrado('Eleitor não encontrado.');
     return eleitor;
   }
 
@@ -41,25 +55,32 @@ export class EleitoresService {
     id: string,
     dados: { nome?: string; email?: string; senha?: string; tituloEleitor?: string }
   ): Promise<Eleitor> {
-    await this.consultarEleitor(id);
-    const senhaHash = dados.senha === undefined ? undefined : await bcrypt.hash(senhaValida(dados.senha), 10);
+    const eleitorId = texto(id, 'id');
+    const entrada = objetoObrigatorio(dados);
+    const alteracoes = {
+      nome: entrada.nome === undefined ? undefined : texto(entrada.nome, 'Nome'),
+      email: entrada.email === undefined ? undefined : emailValido(entrada.email),
+      senhaHash:
+        entrada.senha === undefined ? undefined : await bcrypt.hash(senhaValida(entrada.senha), 10),
+      tituloEleitor:
+        entrada.tituloEleitor === undefined ? undefined : tituloEleitorValido(entrada.tituloEleitor),
+    };
+    exigirAlgumCampoAtualizacao(alteracoes);
+
+    await this.consultarEleitor(eleitorId);
     try {
-      return await this.eleitoresRepository.atualizar(id, {
-        nome: dados.nome === undefined ? undefined : texto(dados.nome, 'Nome'),
-        email: dados.email === undefined ? undefined : emailValido(dados.email),
-        senhaHash,
-        tituloEleitor: dados.tituloEleitor === undefined ? undefined : texto(dados.tituloEleitor, 'Título de eleitor'),
-      });
+      return await this.eleitoresRepository.atualizar(eleitorId, alteracoes);
     } catch (error: any) {
       if (error.code === 'Neo.ClientError.Schema.ConstraintValidationFailed') {
-        throw new Error('Já existe um utilizador registado com este e-mail.');
+        throw erroConflito('Já existe um usuário cadastrado com este e-mail.');
       }
       throw error;
     }
   }
 
   async excluirEleitor(id: string): Promise<void> {
-    await this.consultarEleitor(id);
-    await this.eleitoresRepository.excluir(id);
+    const eleitorId = texto(id, 'id');
+    await this.consultarEleitor(eleitorId);
+    await this.eleitoresRepository.excluir(eleitorId);
   }
 }

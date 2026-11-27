@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import { VotacaoService } from './votacao.service';
+import { responderErro } from '../../shared/errors';
+import { objetoObrigatorio } from '../../shared/validacao';
 
 export class VotacaoController {
   constructor(private votacaoService = new VotacaoService()) {}
@@ -7,19 +9,15 @@ export class VotacaoController {
   votar = async (req: Request, res: Response): Promise<void> => {
     try {
       const eleitorId = req.usuario!.id;
-      const { eleicaoId, candidatoId } = req.body;
+      const { eleicaoId, candidatoId } = objetoObrigatorio(req.body);
       const resultado = await this.votacaoService.confirmarVoto({
         eleitorId,
-        eleicaoId,
-        candidatoId,
+        eleicaoId: eleicaoId as string,
+        candidatoId: candidatoId as string,
       });
       res.status(201).json(resultado);
-    } catch (error: any) {
-      if (error.code) {
-        res.status(503).json({ erro: 'Não foi possível concluir a operação no banco de dados.' });
-      } else {
-        res.status(400).json({ erro: error.message });
-      }
+    } catch (error: unknown) {
+      responderErro(res, error, 400);
     }
   };
 
@@ -29,12 +27,8 @@ export class VotacaoController {
       const eleicaoId = String(req.params.eleicaoId);
       const status = await this.votacaoService.consultarCargosVotados(eleitorId, eleicaoId);
       res.status(200).json(status);
-    } catch (error: any) {
-      if (error.code) {
-        res.status(503).json({ erro: 'Não foi possível concluir a operação no banco de dados.' });
-      } else {
-        res.status(400).json({ erro: error.message });
-      }
+    } catch (error: unknown) {
+      responderErro(res, error, 400);
     }
   };
 }

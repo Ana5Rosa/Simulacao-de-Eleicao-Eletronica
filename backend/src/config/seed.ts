@@ -1,24 +1,16 @@
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'crypto';
-import { emailValido, senhaValida } from '../shared/validacao';
+import { CARGOS_OFICIAIS, emailValido, senhaValida } from '../shared/validacao';
 import { getSession } from './neo4j';
 
 export const executarSeedInicial = async (): Promise<void> => {
   const session = getSession();
   try {
     // 1. Garante os 5 cargos oficiais do minimundo
-    const cargos = [
-      'Deputado Estadual',
-      'Deputado Federal',
-      'Senador',
-      'Governador',
-      'Presidente da República',
-    ];
-
     await session.run(
       `UNWIND $cargos AS nomeCargo
        MERGE (:Cargo {nome: nomeCargo})`,
-      { cargos }
+      { cargos: [...CARGOS_OFICIAIS] }
     );
 
     // 2. Garante o Chefe da Seção inicial com hash seguro
