@@ -1,17 +1,20 @@
+import { erroNaoEncontrado, erroProibido, erroValidacao } from '../../shared/errors';
 import { TokenPayload } from '../../shared/middlewares/authMiddleware';
+import { texto } from '../../shared/validacao';
 import { CandidatoApurado, ResultadosRepository } from './resultados.repository';
 
 export class ResultadosService {
   constructor(private resultadosRepository = new ResultadosRepository()) {}
 
   async acompanharVotacao(eleicaoId: string, usuario: TokenPayload) {
-    const status = await this.resultadosRepository.buscarStatusEleicao(eleicaoId);
+    const idEleicao = texto(eleicaoId, 'eleicaoId');
+    const status = await this.resultadosRepository.buscarStatusEleicao(idEleicao);
     if (!status) {
-      throw new Error('Eleição não encontrada.');
+      throw erroNaoEncontrado('Eleição não encontrada.');
     }
 
     if (status === 'AGENDADA') {
-      throw new Error('O acompanhamento só fica disponível após a abertura da eleição.');
+      throw erroValidacao('O acompanhamento só fica disponível após a abertura da eleição.');
     }
 
     let filtroCargo: string | undefined = undefined;
@@ -20,19 +23,19 @@ export class ResultadosService {
     if (usuario.perfil === 'Candidato') {
       const cargoCandidato = await this.resultadosRepository.buscarCargoDoCandidatoNaEleicao(
         usuario.id,
-        eleicaoId
+        idEleicao
       );
       if (!cargoCandidato) {
-        throw new Error('Você não está concorrendo a nenhum cargo nesta eleição.');
+        throw erroProibido('Você não está concorrendo a nenhum cargo nesta eleição.');
       }
       filtroCargo = cargoCandidato;
     }
 
-    const lista = await this.resultadosRepository.contabilizarVotos(eleicaoId, filtroCargo);
+    const lista = await this.resultadosRepository.contabilizarVotos(idEleicao, filtroCargo);
     const porCargo = this.agruparPorCargo(lista);
 
     return {
-      eleicaoId,
+      eleicaoId: idEleicao,
       situacao: status,
       restritoAoCargo: filtroCargo ?? null,
       resultados: porCargo,
@@ -40,18 +43,19 @@ export class ResultadosService {
   }
 
   async consultarResultadoFinal(eleicaoId: string) {
-    const status = await this.resultadosRepository.buscarStatusEleicao(eleicaoId);
+    const idEleicao = texto(eleicaoId, 'eleicaoId');
+    const status = await this.resultadosRepository.buscarStatusEleicao(idEleicao);
     if (!status) {
-      throw new Error('Eleição não encontrada.');
+      throw erroNaoEncontrado('Eleição não encontrada.');
     }
 
     if (status !== 'ENCERRADA') {
-      throw new Error(
+      throw erroValidacao(
         `O resultado final só pode ser consultado após o encerramento da votação (situação atual: ${status}).`
       );
     }
 
-    const lista = await this.resultadosRepository.contabilizarVotos(eleicaoId);
+    const lista = await this.resultadosRepository.contabilizarVotos(idEleicao);
     const agrupado = this.agruparPorCargo(lista);
 
     const resultadoFinal = agrupado.map((grupo) => {
@@ -69,7 +73,7 @@ export class ResultadosService {
     });
 
     return {
-      eleicaoId,
+      eleicaoId: idEleicao,
       situacao: status,
       resultadoFinal,
     };

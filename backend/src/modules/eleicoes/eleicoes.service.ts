@@ -1,4 +1,5 @@
-import { dataValida, horarioValido, turnoValido } from '../../shared/validacao';
+import { erroNaoEncontrado, erroValidacao } from '../../shared/errors';
+import { dataValida, horarioValido, objetoObrigatorio, texto, turnoValido } from '../../shared/validacao';
 import { Eleicao, EleicoesRepository } from './eleicoes.repository';
 
 export class EleicoesService {
@@ -10,11 +11,14 @@ export class EleicoesService {
     horarioAbertura: string;
     horarioEncerramento: string;
   }): Promise<Eleicao> {
-    const data = dataValida(dados.data);
-    const turno = turnoValido(dados.turno);
-    const horarioAbertura = horarioValido(dados.horarioAbertura);
-    const horarioEncerramento = horarioValido(dados.horarioEncerramento);
-    if (horarioEncerramento <= horarioAbertura) throw new Error('O encerramento deve ser posterior à abertura.');
+    const entrada = objetoObrigatorio(dados);
+    const data = dataValida(entrada.data);
+    const turno = turnoValido(entrada.turno);
+    const horarioAbertura = horarioValido(entrada.horarioAbertura);
+    const horarioEncerramento = horarioValido(entrada.horarioEncerramento);
+    if (horarioEncerramento <= horarioAbertura) {
+      throw erroValidacao('O encerramento deve ser posterior à abertura.');
+    }
     return this.eleicoesRepository.criar({ data, turno, horarioAbertura, horarioEncerramento });
   }
 
@@ -23,9 +27,10 @@ export class EleicoesService {
   }
 
   async consultarSituacao(id: string): Promise<Eleicao> {
-    const eleicao = await this.eleicoesRepository.buscarPorId(id);
+    const eleicaoId = texto(id, 'id');
+    const eleicao = await this.eleicoesRepository.buscarPorId(eleicaoId);
     if (!eleicao) {
-      throw new Error('Eleição não encontrada.');
+      throw erroNaoEncontrado('Eleição não encontrada.');
     }
     return eleicao;
   }
@@ -33,16 +38,16 @@ export class EleicoesService {
   async abrirVotacao(id: string): Promise<Eleicao> {
     const eleicao = await this.consultarSituacao(id);
     if (eleicao.status !== 'AGENDADA') {
-      throw new Error(`Não é possível abrir uma eleição com situação ${eleicao.status}.`);
+      throw erroValidacao(`Não é possível abrir uma eleição com situação ${eleicao.status}.`);
     }
-    return this.eleicoesRepository.atualizarStatus(id, 'ABERTA');
+    return this.eleicoesRepository.atualizarStatus(eleicao.id, 'ABERTA');
   }
 
   async encerrarVotacao(id: string): Promise<Eleicao> {
     const eleicao = await this.consultarSituacao(id);
     if (eleicao.status !== 'ABERTA') {
-      throw new Error(`Só é possível encerrar uma eleição ABERTA (situação atual: ${eleicao.status}).`);
+      throw erroValidacao(`Só é possível encerrar uma eleição ABERTA (situação atual: ${eleicao.status}).`);
     }
-    return this.eleicoesRepository.atualizarStatus(id, 'ENCERRADA');
+    return this.eleicoesRepository.atualizarStatus(eleicao.id, 'ENCERRADA');
   }
 }

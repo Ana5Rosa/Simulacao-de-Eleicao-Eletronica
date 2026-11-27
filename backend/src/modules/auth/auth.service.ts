@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { obterSegredoJWT } from '../../config/env';
+import { erroNaoAutenticado, erroValidacao } from '../../shared/errors';
 import { AuthRepository } from './auth.repository';
 
 export class AuthService {
@@ -8,17 +9,17 @@ export class AuthService {
 
   async login(email: string, senha: string) {
     if (typeof email !== 'string' || !email.trim() || typeof senha !== 'string' || !senha) {
-      throw new Error('E-mail e senha são obrigatórios.');
+      throw erroValidacao('E-mail e senha são obrigatórios.');
     }
 
     const usuario = await this.authRepository.buscarPorEmail(email.trim().toLowerCase());
     if (!usuario) {
-      throw new Error('Credenciais inválidas.');
+      throw erroNaoAutenticado('Credenciais inválidas.');
     }
 
     const senhaValida = await bcrypt.compare(senha, usuario.senhaHash);
     if (!senhaValida) {
-      throw new Error('Credenciais inválidas.');
+      throw erroNaoAutenticado('Credenciais inválidas.');
     }
 
     const secret = obterSegredoJWT();
