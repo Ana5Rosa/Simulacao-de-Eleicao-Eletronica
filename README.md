@@ -21,14 +21,13 @@ A aplicação adota uma **Arquitetura em Camadas Orientada a Domínio (Modular L
 
 ```mermaid
 flowchart TD
-    subgraph Clientes["Clientes e Ferramentas de Teste"]
-        FE["Cliente externo (opcional, não incluído)"]
+    subgraph Clientes["Clientes & Interface de Testes"]
+        FE["Front-End (Ionic + React)"]
         SW["Swagger UI (/api-docs)"]
-        IN["Insomnia / Postman"]
     end
 
     subgraph API["Back-End (Node.js + Express + TypeScript)"]
-        MW["Middleware de Segurança (authMiddleware.ts)<br/>Validação JWT e Perfis: ChefeSecao | Eleitor | Candidato"]
+        MW["Middleware de Segurança (authMiddleware.ts)<br/>Validação JWT & Perfis: ChefeSecao | Eleitor | Candidato"]
 
         subgraph Modulos["Módulos de Domínio"]
             M1["auth"]
@@ -53,10 +52,10 @@ flowchart TD
         NEO[("Neo4j AuraDB Free")]
     end
 
-    FE & SW & IN -->|"HTTP / JSON + Bearer Token"| MW
+    FE & SW -->|HTTP / JSON + Bearer Token| MW
     MW --> Modulos
     Modulos --> Camadas
-    RP -->|"Bolt / TLS"| NEO
+    RP -->|Bolt / TLS| NEO
 ```
 
 ### Decisões Arquiteturais Relevantes
